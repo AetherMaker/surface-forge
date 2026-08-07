@@ -1,8 +1,20 @@
 .DS_Store
+
+# Swift Package Manager
 /.build
 /Packages
-xcuserdata/
-DerivedData/
 .swiftpm/configuration/registries.json
 .swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
+
+# Xcode, per developer. Shared schemes under xcshareddata/ stay tracked so the
+# demo app builds the same way for everyone.
+xcuserdata/
+DerivedData/
+*.xcuserstate
+*.moved-aside
+
+# Signing. Set DEVELOPMENT_TEAM here rather than in project.pbxproj, so no
+# contributor has to undo somebody else's team to build the demo.
+Local.xcconfig
+
 .netrc
