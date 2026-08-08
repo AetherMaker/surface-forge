@@ -20,7 +20,7 @@ The surface above, in full:
 ```swift
 import SurfaceForge
 
-Surface(material: .gold) {
+Surface(material: .gold, cornerRadius: 22, contentPadding: 20) {
     VStack(alignment: .leading, spacing: 2) {
         Text("MEMBER SINCE")
             .font(.system(size: 10, weight: .medium))
@@ -46,6 +46,14 @@ Every line after `Surface` is plain SwiftUI. Size, placement, layout and spacing
 are yours; the package only owns the surface and its light.
 
 ## Install
+
+**Xcode.** File → Add Package Dependencies, then paste:
+
+```
+https://github.com/AetherMaker/surface-forge
+```
+
+**Package.swift.**
 
 ```swift
 .package(url: "https://github.com/AetherMaker/surface-forge", from: "1.0.0")
