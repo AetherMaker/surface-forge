@@ -2,16 +2,16 @@
 
 # SurfaceForge
 
-**SwiftUI surfaces that react to device tilt, shaded in Metal.**
+**SwiftUI + Metal surfaces that react to device tilt.**
 
 ![Swift 6](https://img.shields.io/badge/Swift-6-F05138?style=flat-square&logo=swift&logoColor=white)
 ![iOS 17+](https://img.shields.io/badge/iOS-17%2B-000000?style=flat-square&logo=apple&logoColor=white)
 ![No dependencies](https://img.shields.io/badge/dependencies-none-4C566A?style=flat-square)
 ![MIT](https://img.shields.io/badge/licence-MIT-4C566A?style=flat-square)
 
-</div>
+<img src="https://github.com/user-attachments/assets/7e474e05-4c14-4081-99f1-6670fbf3b710" width="520" alt="A gold surface catching the light as the phone tilts">
 
-https://github.com/user-attachments/assets/ef373ca7-d45a-4819-9e08-88a90d639ce7
+</div>
 
 <br>
 
