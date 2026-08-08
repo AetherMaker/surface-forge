@@ -5,6 +5,8 @@ reflections respond as you move and tilt the device.
 
 **Not a card library. Not a template gallery. A surface with a material on it.**
 
+https://github.com/user-attachments/assets/ef373ca7-d45a-4819-9e08-88a90d639ce7
+
 > **New.** Everything below is built and tested, but nothing has been tagged yet,
 > so treat the API as unstable until 1.0.
 
