@@ -1,9 +1,6 @@
 # SurfaceForge
 
-A SwiftUI surface that behaves like a physical object: a metallic material whose
-reflections respond as you move and tilt the device.
-
-**Not a card library. Not a template gallery. A surface with a material on it.**
+SwiftUI surfaces that react to device tilt, shaded in Metal.
 
 https://github.com/user-attachments/assets/ef373ca7-d45a-4819-9e08-88a90d639ce7
 
