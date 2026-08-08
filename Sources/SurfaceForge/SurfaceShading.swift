@@ -86,10 +86,10 @@ nonisolated enum SurfaceShading {
     /// The shading eye in surface half-widths, solved from the `dot(N, V)`
     /// envelope rather than picked.
     ///
-    /// Solved here rather than per fragment. `halfHeight` is uniform across the
-    /// surface, so the shader was re-solving one quadratic per pixel for a value
-    /// that never varies, and the compiler cannot hoist it because it cannot
-    /// know the uniform.
+    /// Solved here rather than in the shader. `halfHeight` is uniform across the
+    /// surface, so a fragment-side solve would run this quadratic once per pixel
+    /// for a value that does not vary, and the compiler cannot hoist it out
+    /// because it cannot know a uniform is constant.
     static func virtualEye(halfHeight h: Double) -> (y: Double, z: Double) {
         let maximumNdotV = 0.980
         let minimumNdotV = 0.873

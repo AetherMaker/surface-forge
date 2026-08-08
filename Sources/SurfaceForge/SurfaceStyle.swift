@@ -11,9 +11,9 @@ enum SurfaceStyle {
     /// metal reads.
     ///
     /// The shader multiplies the material's tint by this, so a bright surface
-    /// yields pale champagne and a darker one a richer metal. Measured: 0.96
-    /// renders gold at (237, 210, 131), too light and too thin. 0.88 lands nearer
-    /// (214, 187, 114), which reads as struck metal while leaving the gleam
+    /// yields pale champagne and a darker one a richer metal. At 0.96, gold
+    /// renders (237, 210, 131), too light and too thin. At 0.88 it lands nearer
+    /// (214, 187, 114), which reads as struck metal and leaves the gleam
     /// somewhere to travel.
     static let stock = Color(white: 0.88)
 
@@ -36,13 +36,16 @@ enum SurfaceStyle {
 
     /// A sub-pixel feather on the silhouette.
     ///
-    /// A hard mask does not survive the 3D transform applied after it. Measured:
-    /// with a hard clip the tilted surface's edge held flat, jumped a whole device
-    /// pixel, held flat again, with no partial-coverage pixel anywhere. The
-    /// classic one-bit staircase, and `drawingGroup()` did not rescue it. A
-    /// feather gives the re-rasterisation an actual gradient to sample, and at
-    /// 0.4pt it is far below looking blurred. If anything it reads as a real edge
-    /// rather than a vector boundary.
+    /// A hard mask does not survive the 3D transform applied after it. Under a
+    /// hard clip the tilted edge holds flat, jumps a whole device pixel, holds
+    /// flat again, with no partial-coverage pixel anywhere: the one-bit
+    /// staircase. `drawingGroup()` does not rescue it, because the jagged edge is
+    /// inside the layer rather than at its boundary.
+    ///
+    /// A feather gives the re-rasterisation an actual gradient to sample. At
+    /// 0.4pt it is under a single device pixel at any scale factor, so it never
+    /// reads as blur. If anything it reads as a real edge rather than a vector
+    /// boundary.
     static let silhouetteFeather: CGFloat = 0.4
 
     /// Foreshortening for the surface's own lean.

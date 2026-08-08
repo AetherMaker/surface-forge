@@ -60,25 +60,24 @@ constant float kCoatCeiling = 0.75;
 
 // How much of the sheen's legibility factor the coat also takes.
 //
-// Not zero, which was the original behaviour and let the gleam wash content out
-// as it crossed. kCoatCeiling alone is not enough: the coat is added directly, so
-// a fragment gains up to 0.75 in linear light, 226/255, however dark it arrived.
-// This damps that by how dark the content actually is, so it bites on glyphs and
-// leaves the band over bare surface alone. Lowering kCoatCeiling instead is the
-// wrong lever, because that dims the gleam where the effect lives and where
-// nothing was wrong.
+// At zero the gleam washes content out as it crosses. kCoatCeiling alone does not
+// prevent that: the coat is added directly, so a fragment gains up to 0.75 in
+// linear light, 226/255, however dark it arrived. This damps that gain by how
+// dark the content is, so it bites on glyphs and leaves the band over bare
+// surface alone. Lowering kCoatCeiling instead is the wrong lever, because that
+// dims the gleam where the effect lives.
 //
-// Measured rather than modelled. Contrast inside the gleam's own 120px window,
-// across four frozen phases, worst moment first:
+// Ink-to-surface contrast inside the gleam's own 120px window, captured at four
+// light angles, worst first. Read as what each setting buys, not as a log:
 //
-//     phase    off    0.50    0.85
-//     0.15    67.0    74.6    81.8      (+11% / +22%)
-//     0.55    74.6    83.3    93.5      (+12% / +25%)
-//     0.35   116.5   121.7   126.5      ( +4% /  +9%)
-//     0.75   137.9   135.1   133.3      ( -2% /  -3%, gleam is off the marks)
+//     angle    off    0.50    0.85
+//         a   67.0    74.6    81.8      (+11% / +22%)
+//         b   74.6    83.3    93.5      (+12% / +25%)
+//         c  116.5   121.7   126.5      ( +4% /  +9%)
+//         d  137.9   135.1   133.3      ( -2% /  -3%, gleam is off the marks)
 //
-// 0.85 buys roughly double what 0.50 does and costs about 4/255 of brightness
-// against 0.50's 2. Neither visibly dims the metal.
+// 0.85 buys roughly double what 0.50 does, and costs about 4/255 of surface
+// brightness against 0.50's 2. Neither visibly dims the metal.
 //
 // Not full damping. The coat crossing content is the single cue that makes this
 // read as light on a surface rather than as printed metallic art. The point is

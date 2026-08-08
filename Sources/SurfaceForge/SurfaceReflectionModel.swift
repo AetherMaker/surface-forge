@@ -12,9 +12,13 @@ import simd
 final class SurfaceReflectionModel {
     // MARK: Feel
 
-    /// 0.65 read as a permanent 35% haircut on every tilt angle, and the
-    /// material never felt coupled to the hand. 0.9 keeps a whisper of
-    /// stabilization while the axis genuinely follows the device.
+    /// How much of the device's own attitude reaches the light, against how much
+    /// is held at the resting direction.
+    ///
+    /// Anything much below this is a standing haircut on every tilt angle, and
+    /// the material stops feeling coupled to the hand. At 0.65 the loss is 35% of
+    /// every gesture. 0.9 keeps a whisper of stabilization while the axis
+    /// genuinely follows the device.
     static let deviceMotionInfluence: Float = 0.9
 
     /// How long the axis takes to hand over from the resting direction to the
@@ -25,18 +29,19 @@ final class SurfaceReflectionModel {
     /// response survives any sample rate and the filter cannot silently change
     /// character when the update interval is touched.
     ///
-    /// 93.4 ms. Its predecessor at 0.22 s put a quarter second of lag between
-    /// hand and gleam, which was the single biggest reason the material read as
-    /// detached.
+    /// 93.4 ms is short enough to take hand jitter out without the gleam trailing
+    /// the hand. At 0.22 s the lag is a quarter of a second, which is the
+    /// difference between a reflection that is coupled to you and one that is
+    /// merely nearby.
     static let filterTimeConstant: Float = 0.0934
 
     /// How quickly a held posture becomes the new level, once the device is
     /// actually still.
     ///
-    /// Only this short because it is gated. Relaxing unconditionally chased the
-    /// device mid-tilt and cancelled part of the motion it was reporting, so it
-    /// had to run at 1.8 s to stay out of the way, and at 1.8 s the settle read
-    /// as nothing happening.
+    /// Only this short because it is gated on stillness. An ungated reference
+    /// chases the device mid-tilt and cancels part of the motion it is meant to
+    /// report, so it would have to run near 2 s to stay out of the way, and at
+    /// 2 s the settle is too slow to register as anything happening.
     static let restRelaxTimeConstant: Float = 0.30
 
     /// How quickly the light finds its way home, once the device is still.
@@ -428,18 +433,17 @@ final class SurfaceReflectionModel {
 
         // The surface settles back to flat wherever you hold still.
         //
-        // Measuring tilt against a neutral captured when the surface appeared
-        // meant that pose, usually a hand at some reading angle, was the only
-        // one that read as level. Set the phone on a desk and it sat visibly
-        // tilted. Anchoring to gravity only moves the problem: desk-flat becomes
-        // level but holding the phone upright to read then sits permanently at
-        // the ceiling. No single fixed reference makes both postures level.
+        // The reference has to adapt, because no fixed one makes every posture
+        // level. Measure against the attitude captured when the surface appeared
+        // and only that pose reads as flat, so setting the phone on a desk leaves
+        // a visibly tilted surface. Anchor to gravity instead and desk-flat is
+        // level but holding the phone up to read sits permanently at the ceiling.
         //
-        // So the reference adapts, but only while the device is still. That gate
-        // is the trick. An ungated reference chases you mid-gesture and cancels
-        // part of the motion it is supposed to report, which is why the tilt read
-        // as weak. Frozen during movement, the surface gets the full gain, and
-        // the moment you stop, the reference catches up and it returns to flat.
+        // So it adapts, but only while the device is still, and that gate is the
+        // whole trick. Ungated, the reference chases you mid-gesture and cancels
+        // part of the motion it is meant to report, which reads as a weak tilt.
+        // Frozen during movement the surface gets the full gain, and the moment
+        // you stop, the reference catches up and it returns to flat.
         let restingBlend = (1 - exp(-deltaTime / Self.restRelaxTimeConstant)) * stillness
         restingPlanar += (filteredPlanar - restingPlanar) * restingBlend
 
