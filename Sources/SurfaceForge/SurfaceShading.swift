@@ -31,11 +31,16 @@ nonisolated enum SurfaceShading {
     ///     p.x = ez * L.x / L.z
     ///     p.y = ey + ez * L.y / L.z
     ///
-    /// Putting the resting gleam at `p = (-0.40, 0)`, which is 30% in from the
-    /// leading edge and vertically centred, gives the components below.
+    /// Putting the resting gleam at `p = (0, 0)`, dead centre, gives the
+    /// components below. `lx` comes out exactly zero, which is what makes
+    /// ``lightAngle(forOffset:halfHeight:)`` a clean `atan`.
+    ///
+    /// Centre because light reads as coming from above, so a highlight resting
+    /// off to one side looks like a mistake rather than a choice.
+    /// ``SwiftUI/View/surfaceLightOffset(_:)`` moves it from here.
     static let neutralKeyDirection: SIMD3<Float> = {
         let eye = virtualEye(halfHeight: referenceHalfHeight)
-        let restingGleam = SIMD2<Double>(-0.40, 0)
+        let restingGleam = SIMD2<Double>(0, 0)
         let lz = 0.941
         let lx = restingGleam.x * lz / eye.z
         let ly = (restingGleam.y - eye.y) * lz / eye.z
@@ -167,6 +172,47 @@ nonisolated enum SurfaceShading {
                 simd_mix(restingDiffuseAxis, diffuseAxis, SIMD3<Float>(repeating: amount)),
                 fallback: restingDiffuseAxis
             )
+        )
+    }
+
+    // MARK: - Moving the light
+
+    /// The rotation that lands the resting highlight at `offset` half-widths from
+    /// centre, where -1 is the left edge and +1 the right.
+    ///
+    /// With `neutralKeyDirection.x` at exactly zero, rotating the light about the
+    /// vertical by `angle` puts the peak at `ez * tan(angle)`, so this inverts to
+    /// a plain `atan`. It takes `halfHeight` rather than assuming the reference
+    /// proportion, because `ez` grows with a taller surface and the same angle
+    /// would otherwise throw the highlight further on one shape than another.
+    static func lightAngle(forOffset offset: Double, halfHeight: Double) -> Double {
+        guard abs(offset) > 1e-9 else { return 0 }
+        return atan(offset / virtualEye(halfHeight: halfHeight).z)
+    }
+
+    /// Swings a light about the surface's vertical axis.
+    ///
+    /// Applied to **both** lights by the same angle. Moving only the specular is
+    /// what makes the shading and the highlight disagree about where the light
+    /// is, which is subtle and hard to unsee.
+    ///
+    /// A positive angle moves the highlight toward `+x`. The result is lifted for
+    /// the reason ``keyDirection(deviceAxis:)`` lifts: a swung light must never
+    /// sink below the surface.
+    ///
+    /// Exact passthrough at zero, so the default costs nothing and cannot
+    /// introduce a rounding error into the common case.
+    static func swung(
+        _ direction: SIMD3<Float>,
+        by angle: Double,
+        minimumZ: Float
+    ) -> SIMD3<Float> {
+        guard abs(angle) > 1e-9 else { return direction }
+
+        let rotation = simd_quatf(angle: Float(angle), axis: SIMD3<Float>(0, 1, 0))
+        return lifted(
+            normalized(rotation.act(direction), fallback: direction),
+            minimumZ: minimumZ
         )
     }
 

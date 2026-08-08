@@ -32,6 +32,7 @@ public struct Surface<Content: View>: View {
 
     @Environment(\.surfaceTiltSource) private var tiltSource
     @Environment(\.surfaceGleam) private var gleam
+    @Environment(\.surfaceLightOffset) private var lightOffset
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
 
@@ -69,7 +70,8 @@ public struct Surface<Content: View>: View {
                 material,
                 keyDirection: reflection.keyDirection,
                 diffuseAxis: reflection.diffuseAxis,
-                gleam: gleam
+                gleam: gleam,
+                lightOffset: lightOffset
             )
             .overlay {
                 // After the material, so the rim stays a true hairline instead of
@@ -148,10 +150,11 @@ public struct Surface<Content: View>: View {
     }
 }
 
-// MARK: - Gleam
+// MARK: - Gleam and light
 
 extension EnvironmentValues {
     @Entry var surfaceGleam: Double = 1
+    @Entry var surfaceLightOffset: Double = 0
 }
 
 extension View {
@@ -163,6 +166,23 @@ extension View {
     /// Propagates through the environment, so it can be set once high in a tree.
     public func surfaceGleam(_ amount: Double) -> some View {
         environment(\.surfaceGleam, amount)
+    }
+
+    /// Where the light sits, as the resting highlight's distance from centre.
+    ///
+    /// `0` centres it, `-1` puts it at the left edge and `+1` at the right.
+    /// Values outside that range clamp.
+    ///
+    /// This moves both of the surface's lights together, so the shading and the
+    /// highlight keep agreeing about which side the light is on. Moving only one
+    /// is what makes a surface look subtly wrong.
+    ///
+    /// Propagates through the environment, and that is deliberate rather than
+    /// convenient: two surfaces on screen are in the same room, and one lit from
+    /// the left beside one lit from the right is a bug. Set it once high in a
+    /// tree and every surface below agrees.
+    public func surfaceLightOffset(_ offset: Double) -> some View {
+        environment(\.surfaceLightOffset, offset)
     }
 }
 

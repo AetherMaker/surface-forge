@@ -39,6 +39,20 @@ final class SurfaceReflectionModel {
     /// as nothing happening.
     static let restRelaxTimeConstant: Float = 0.30
 
+    /// How quickly the light finds its way home, once the device is still.
+    ///
+    /// More than ten times the surface's own settle, and the gap is the point. A
+    /// reflection that forgets where the light is stops being a reflection, so
+    /// this must never fire during use. But with no return at all, holding the
+    /// phone at an angle leaves a surface that looks flat while its highlight says
+    /// it is tilted, and the resting look the design chose is only ever seen on
+    /// first launch.
+    ///
+    /// At 4 s the light is most of the way home after about twelve seconds of
+    /// stillness: unhurried enough to read as the light settling rather than as
+    /// the material resetting.
+    static let lightReturnTimeConstant: Float = 4.0
+
     /// Angular speed, in radians per second, that counts as fully moving.
     ///
     /// 0.55 puts an ordinary deliberate tilt into saturation while leaving a
@@ -121,6 +135,9 @@ final class SurfaceReflectionModel {
     private var isActive = false
 
     private var neutralOrientation: simd_quatf?
+    /// The light's own reference, which creeps toward the held attitude while the
+    /// surface's lean measures against the fixed neutral above.
+    private var restingOrientation: simd_quatf?
     private var neutralTimestamp: TimeInterval?
     private var lastSampleTimestamp: TimeInterval?
     private var filteredAxis = SurfaceShading.canonicalAxis
@@ -208,6 +225,7 @@ final class SurfaceReflectionModel {
     /// can see.
     private func clearFilters() {
         neutralOrientation = nil
+        restingOrientation = nil
         neutralTimestamp = nil
         lastSampleTimestamp = nil
         filteredAxis = SurfaceShading.canonicalAxis
@@ -273,21 +291,44 @@ final class SurfaceReflectionModel {
 
         let relative = sample.orientation * neutral.inverse
 
-        // The reflection axis is an external light expressed in the device's own
-        // frame, so it counter-rotates as the device rotates. That inverse is
-        // the material's whole physical claim: the surface is glued to the
-        // phone, the light stays in the room.
-        let deviceAxis = SurfaceShading.normalized(
-            relative.inverse.act(SurfaceShading.canonicalAxis),
-            fallback: SurfaceShading.canonicalAxis
-        )
-
         let deltaTime = Float(
             max(sample.timestamp - (lastSampleTimestamp ?? sample.timestamp), 1.0 / 240.0)
         )
         let blend = sample.isDeterministic
             ? 1
             : 1 - exp(-deltaTime / Self.filterTimeConstant)
+
+        // The in-plane rotation, needed before either the light or the lean,
+        // because both key off how fast the device is being turned.
+        let planar = Self.planarRotation(of: relative)
+        updateActivation(
+            angularSpeed: simd_length(planar - previousPlanar) / deltaTime,
+            deltaTime: deltaTime
+        )
+        previousPlanar = planar
+
+        // Cubed, so the gate is a switch rather than a dimmer. A linear stillness
+        // leaves a reference running at 78% through a real gesture, most of the
+        // way to having no gate at all. Cubing collapses that to 5%.
+        let stillness = pow(1 - activation, 3)
+
+        relaxLightReference(
+            toward: sample.orientation,
+            stillness: stillness,
+            deltaTime: deltaTime,
+            isDeterministic: sample.isDeterministic
+        )
+
+        // The reflection axis is an external light expressed in the device's own
+        // frame, so it counter-rotates as the device rotates. That inverse is
+        // the material's whole physical claim: the surface is glued to the
+        // phone, the light stays in the room.
+        let deviceAxis = SurfaceShading.normalized(
+            (sample.orientation * lightReference(default: neutral).inverse)
+                .inverse
+                .act(SurfaceShading.canonicalAxis),
+            fallback: SurfaceShading.canonicalAxis
+        )
 
         filteredAxis = guardedBlend(from: filteredAxis, to: deviceAxis, amount: blend)
 
@@ -311,38 +352,79 @@ final class SurfaceReflectionModel {
         )
         keyDirection = SurfaceShading.keyDirection(deviceAxis: effective)
 
-        // Note the asymmetry with the light above, which stays anchored to the
-        // fixed neutral. A reflection depends on where the light actually is, so
-        // the gleam must not drift back to a rest pose. Only the surface, which
-        // is an object that settles, does.
-        updateTilt(relative: relative, blend: blend, deltaTime: deltaTime)
+        // The light and the lean both settle, at very different rates. The lean is
+        // an object coming to rest, so it takes under a second. The light is where
+        // the room is, so it takes several.
+        updateTilt(
+            planar: planar,
+            blend: blend,
+            deltaTime: deltaTime,
+            stillness: stillness
+        )
 
         lastSampleTimestamp = sample.timestamp
     }
 
+    // MARK: Where the light comes home to
+
+    /// The attitude the light is measured against.
+    ///
+    /// Starts as the adopted neutral and creeps toward wherever the device is
+    /// held, so a surface left alone eventually shows the resting highlight the
+    /// design chose rather than one that depends on how somebody happens to be
+    /// holding their phone.
+    private func lightReference(default neutral: simd_quatf) -> simd_quatf {
+        restingOrientation ?? neutral
+    }
+
+    /// Creeps the light's reference toward the held attitude, but only while the
+    /// device is still.
+    ///
+    /// Not applied to a deterministic sample. A fixed angle is an absolute
+    /// request, and relaxing it would walk the light back to centre a few seconds
+    /// after someone set it, which reads as the control not working.
+    private func relaxLightReference(
+        toward orientation: simd_quatf,
+        stillness: Float,
+        deltaTime: Float,
+        isDeterministic: Bool
+    ) {
+        guard !isDeterministic else { return }
+
+        let current = restingOrientation ?? neutralOrientation ?? orientation
+        let amount = (1 - exp(-deltaTime / Self.lightReturnTimeConstant)) * stillness
+
+        restingOrientation = simd_slerp(
+            simd_normalize(current),
+            simd_normalize(orientation),
+            amount
+        )
+    }
+
     // MARK: The surface's own tilt
 
-    private func updateTilt(relative: simd_quatf, blend: Float, deltaTime: Float) {
-        // The counter-rotation as a rotation vector, the quaternion log map.
-        //
-        // Working in the log map is what lets the z component be dropped
-        // cleanly. Zeroing the z of an axis-and-angle pair would keep the full
-        // angle and turn a pure in-plane twist into a full-magnitude tip. Here,
-        // dropping z removes exactly the twist and nothing else.
-        let rotation = Self.rotationVector(relative.inverse)
+    /// The counter-rotation's in-plane part.
+    ///
+    /// Taken through the quaternion log map, which is what lets the z component be
+    /// dropped cleanly. Zeroing the z of an axis-and-angle pair would keep the
+    /// full angle and turn a pure in-plane twist into a full-magnitude tip. Here,
+    /// dropping z removes exactly the twist and nothing else.
+    ///
+    /// A rotation about z is the phone spinning in its own plane, and the surface
+    /// is printed on that plane, so it spins with it and must not counter-rotate.
+    /// Doing so reads as the surface sliding around its own centre.
+    private static func planarRotation(of relative: simd_quatf) -> SIMD2<Float> {
+        let rotation = rotationVector(relative.inverse)
+        return SIMD2<Float>(rotation.x, rotation.y)
+    }
 
-        // Only the in-plane axes survive. A rotation about z is the phone
-        // spinning in its own plane, and the surface is printed on that plane,
-        // so it spins with it and must not counter-rotate. Doing so reads as the
-        // surface sliding around its own centre.
-        let planar = SIMD2<Float>(rotation.x, rotation.y)
+    private func updateTilt(
+        planar: SIMD2<Float>,
+        blend: Float,
+        deltaTime: Float,
+        stillness: Float
+    ) {
         filteredPlanar += (planar - filteredPlanar) * blend
-
-        updateActivation(
-            angularSpeed: simd_length(planar - previousPlanar) / deltaTime,
-            deltaTime: deltaTime
-        )
-        previousPlanar = planar
 
         // The surface settles back to flat wherever you hold still.
         //
@@ -358,13 +440,6 @@ final class SurfaceReflectionModel {
         // part of the motion it is supposed to report, which is why the tilt read
         // as weak. Frozen during movement, the surface gets the full gain, and
         // the moment you stop, the reference catches up and it returns to flat.
-        //
-        // Cubed, so the gate is a switch rather than a dimmer. A linear
-        // stillness leaves the reference running at 78% through a real gesture,
-        // most of the way to having no gate at all. Cubing collapses that to 5%
-        // and pushes the effective time constant past six seconds. At true rest
-        // the term is 1 and the quick return is untouched.
-        let stillness = pow(1 - activation, 3)
         let restingBlend = (1 - exp(-deltaTime / Self.restRelaxTimeConstant)) * stillness
         restingPlanar += (filteredPlanar - restingPlanar) * restingBlend
 

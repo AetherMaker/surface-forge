@@ -124,15 +124,26 @@ struct SmoothingTests
         return model.keyDirection
     }
 
+    /// Under a degree of light direction.
+    ///
+    /// The filter is a time constant rather than a per-sample blend precisely so
+    /// this holds: a per-sample blend lands twice as far along at double the rate,
+    /// which is a distance of about 0.1 here rather than 0.008.
+    ///
+    /// Not exact, and it cannot be. The light's return home is gated by
+    /// stillness, which varies over time, and a time-varying gate multiplied by
+    /// an exponential step only integrates approximately. Measured at 0.005 for
+    /// 30 against 60 Hz and 0.008 for 30 against 120, which is 0.3 and 0.5
+    /// degrees. This bound leaves headroom over that while still catching the
+    /// per-sample-blend regression by an order of magnitude.
+    private let rateTolerance: Float = 0.02
+
     @Test("The response is the same at 30 Hz and 60 Hz")
     func responseIsRateIndependent() {
-        // The filter is written as a time constant rather than a per-sample
-        // blend precisely so this holds. A per-sample blend would land twice as
-        // far along at double the rate.
         let at30 = lightAfterOneSecond(atHz: 30)
         let at60 = lightAfterOneSecond(atHz: 60)
 
-        #expect(simd_distance(at30, at60) < 1e-3)
+        #expect(simd_distance(at30, at60) < rateTolerance)
     }
 
     @Test("The response is the same at 30 Hz and 120 Hz")
@@ -140,7 +151,7 @@ struct SmoothingTests
         let at30 = lightAfterOneSecond(atHz: 30)
         let at120 = lightAfterOneSecond(atHz: 120)
 
-        #expect(simd_distance(at30, at120) < 1e-3)
+        #expect(simd_distance(at30, at120) < rateTolerance)
     }
 
     @Test("A sample older than the last one is ignored")

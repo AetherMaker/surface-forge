@@ -24,12 +24,14 @@ struct ShadingLightTests {
         #expect(simd_distance(key, SurfaceShading.neutralKeyDirection) < 1e-6)
     }
 
-    @Test("The resting gleam lands 30% in from the leading edge")
-    func restingGleamLandsWhereItWasPlaced() {
+    @Test("The resting gleam is vertically centred")
+    func restingGleamIsVerticallyCentred() {
+        // Horizontal placement belongs to `SurfaceLightOffsetTests`. This pins the
+        // other axis, which nothing exposes and which a change to the eye solve
+        // could quietly break.
         let eye = SurfaceShading.virtualEye(halfHeight: SurfaceShading.referenceHalfHeight)
         let peak = specularPeak(light: SurfaceShading.neutralKeyDirection, eye: eye)
 
-        #expect(abs(peak.x - -0.40) < 1e-3)
         #expect(abs(peak.y) < 1e-3)
     }
 

@@ -60,10 +60,38 @@ Previews and the Simulator have no motion data, so `.deviceMotion` leaves the
 surface at rest there. Use `.fixed` to see the reflection, and for repeatable
 screenshots and tests.
 
+Every surface on screen reads the device once, through one shared motion source
+that starts with the first surface and stops with the last. A `ScrollView` of them
+costs the same battery as one.
+
+## Light
+
+```swift
+.surfaceLightOffset(0)      // centred, the default
+.surfaceLightOffset(-0.6)   // toward the left edge
+.surfaceLightOffset(1)      // at the right edge
+```
+
+Where the light sits, given as where its resting highlight lands. `-1` is the
+left edge and `+1` the right.
+
+This moves both of the surface's lights together, the one that shades it and the
+one it reflects, so they keep agreeing about which side the light is on.
+
 ```swift
 .surfaceGleam(0)   // flat matte, no pose-dependent reflection
 .surfaceGleam(1)   // full
 ```
+
+Both propagate through the environment, and that is deliberate rather than
+convenient: two surfaces on screen are in the same room, so one lit from the left
+beside one lit from the right is a bug. Set either once high in a tree and every
+surface below agrees.
+
+## Demo
+
+`Example/SurfaceForgeDemo.xcodeproj` is one surface with a control for every knob.
+It builds and runs on a Simulator with no Apple account and no signing setup.
 
 ## Requirements
 

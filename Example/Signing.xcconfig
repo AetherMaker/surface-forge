@@ -1,0 +1,14 @@
+// Signing, kept out of the project file.
+//
+// Xcode writes DEVELOPMENT_TEAM straight into project.pbxproj the moment you
+// pick a team from Signing and Capabilities, and that lands in the next commit.
+// Setting it here instead means the tracked project carries no team at all, and
+// nobody has to undo somebody else's to build.
+//
+// The `?` means "use it if it exists", so a fresh clone with no Local.xcconfig
+// still builds. Running on a Simulator needs no team, so most people never make
+// one.
+#include? "Local.xcconfig"
+
+DEVELOPMENT_TEAM = $(LOCAL_DEVELOPMENT_TEAM)
+CODE_SIGN_STYLE = Automatic
