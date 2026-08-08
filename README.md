@@ -45,6 +45,15 @@ Surface(material: .gold, cornerRadius: 22, contentPadding: 20) {
 Every line after `Surface` is plain SwiftUI. Size, placement, layout and spacing
 are yours; the package only owns the surface and its light.
 
+| Parameter | Default | |
+|---|---|---|
+| `material` | `.gold` | What the surface is made of. |
+| `cornerRadius` | `22` | Continuous, squircle corners. |
+| `contentPadding` | `20` | Inset between your content and the surface's edge. |
+
+Your content fills the surface's bounds **first**, and `contentPadding` insets it
+after, so `Spacer()` and alignments reach the edges as you would expect.
+
 ## Install
 
 **Xcode.** File → Add Package Dependencies, then paste:
@@ -61,7 +70,20 @@ https://github.com/AetherMaker/surface-forge
 
 ## Materials
 
-`.gold` &nbsp;`.silver` &nbsp;`.roseGold` &nbsp;`.copper` &nbsp;`.brass` &nbsp;`.gunmetal` &nbsp;`.custom(tint:)`
+`.gold` &nbsp;`.silver` &nbsp;`.roseGold` &nbsp;`.copper` &nbsp;`.brass` &nbsp;`.gunmetal`
+
+```swift
+SurfaceMaterial.all          // every built-in, in order. For a picker.
+material.name                // "Rose gold"
+material.approximateColor    // a flat Color for a swatch, not what the surface looks like
+
+SurfaceMaterial.custom(tint: .init(red: 0.8, green: 0.9, blue: 1), name: "Platinum")
+```
+
+**A custom tint should be richer and more saturated than the metal you want.**
+The shader multiplies it by your content's own luminance, which both lifts and
+desaturates it. Gold is stored as `(1.00, 0.72, 0.22)` and renders near
+`(214, 187, 114)`.
 
 ## Light
 
