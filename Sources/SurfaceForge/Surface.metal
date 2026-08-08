@@ -80,9 +80,9 @@ constant float kCoatCeiling = 0.75;
 // 0.85 buys roughly double what 0.50 does and costs about 4/255 of brightness
 // against 0.50's 2. Neither visibly dims the metal.
 //
-// Emphatically not full damping. The coat crossing content is the single cue
-// that makes this read as light on a surface rather than as printed metallic
-// art. The point is to stop it erasing, not to stop it happening.
+// Not full damping. The coat crossing content is the single cue that makes this
+// read as light on a surface rather than as printed metallic art. The point is
+// to stop it erasing, not to stop it happening.
 constant float kCoatLegibility = 0.85;
 
 // MARK: - Flat-sheet geometry

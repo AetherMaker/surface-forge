@@ -33,11 +33,10 @@ final class SurfaceReflectionModel {
     /// How quickly a held posture becomes the new level, once the device is
     /// actually still.
     ///
-    /// 1.8 s run unconditionally was wrong twice over. It chased the device
-    /// during a tilt, cancelling part of the motion it was supposed to report,
-    /// and when the device stopped it collapsed over nearly two seconds, too
-    /// slow to register as anything happening. Gating it on stillness means it
-    /// no longer has to be slow to avoid eating live motion.
+    /// Only this short because it is gated. Relaxing unconditionally chased the
+    /// device mid-tilt and cancelled part of the motion it was reporting, so it
+    /// had to run at 1.8 s to stay out of the way, and at 1.8 s the settle read
+    /// as nothing happening.
     static let restRelaxTimeConstant: Float = 0.30
 
     /// Angular speed, in radians per second, that counts as fully moving.
