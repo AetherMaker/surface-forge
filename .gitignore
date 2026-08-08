@@ -17,4 +17,8 @@ DerivedData/
 # contributor has to undo somebody else's team to build the demo.
 Local.xcconfig
 
+# Working notes. Where the material could go next, and what is deliberately not
+# in the public package.
+NOTES.md
+
 .netrc
