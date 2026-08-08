@@ -15,21 +15,35 @@
 
 <br>
 
+The surface above, in full:
+
 ```swift
 import SurfaceForge
 
 Surface(material: .gold) {
-    VStack(alignment: .leading) {
-        Text("MEMBER").font(.caption).foregroundStyle(.secondary)
+    VStack(alignment: .leading, spacing: 2) {
+        Text("MEMBER SINCE")
+            .font(.system(size: 10, weight: .medium))
+            .foregroundStyle(.tertiary)
+        Text("2019")
+            .font(.system(size: 15, weight: .medium))
+            .foregroundStyle(.secondary)
+
         Spacer()
-        Text("4471 0982 3310").monospacedDigit()
+
+        Text("GOLD")
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(.tertiary)
+        Text("4471 0982 3310")
+            .font(.system(size: 26, weight: .semibold))
+            .monospacedDigit()
     }
 }
 .frame(width: 353, height: 220)
 ```
 
-That is the whole API for a working surface. Size, placement, layout and spacing
-come from plain SwiftUI.
+Every line after `Surface` is plain SwiftUI. Size, placement, layout and spacing
+are yours; the package only owns the surface and its light.
 
 ## Install
 
