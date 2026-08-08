@@ -5,8 +5,8 @@ reflections respond as you move and tilt the device.
 
 **Not a card library. Not a template gallery. A surface with a material on it.**
 
-> **Status: v1 in progress.** The API below is the target, not what ships today.
-> Nothing here is stable yet.
+> **New.** Everything below is built and tested, but nothing has been tagged yet,
+> so treat the API as unstable until 1.0.
 
 ## Install
 
