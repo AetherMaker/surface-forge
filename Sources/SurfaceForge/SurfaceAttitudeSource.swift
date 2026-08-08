@@ -5,7 +5,7 @@ import simd
 // MARK: - Readings
 
 /// One attitude reading.
-struct AttitudeSample: Sendable {
+struct SurfaceAttitudeSample: Sendable {
     let orientation: simd_quatf
     let timestamp: TimeInterval
 
@@ -20,8 +20,8 @@ struct AttitudeSample: Sendable {
 /// A protocol because neither a test nor an Xcode preview has motion hardware,
 /// and the material has to be reviewable in both.
 @MainActor
-protocol AttitudeSource: AnyObject {
-    var sampleHandler: ((AttitudeSample) -> Void)? { get set }
+protocol SurfaceAttitudeSource: AnyObject {
+    var sampleHandler: ((SurfaceAttitudeSample) -> Void)? { get set }
 
     /// Called when readings stop and will not resume. The model returns the
     /// light to rest.
@@ -31,7 +31,7 @@ protocol AttitudeSource: AnyObject {
     func stop()
 }
 
-enum AttitudeTiming {
+enum SurfaceMotionTiming {
     /// 30 Hz. The reflection is smoothed by a time constant rather than by a
     /// sample count, so this rate sets cost, not feel. Raising it spends battery
     /// and changes nothing a viewer can see.
@@ -47,8 +47,8 @@ enum AttitudeTiming {
 /// arrives, so a single sample freezes the surface mid-lean with no way to
 /// settle.
 @MainActor
-final class FixedAttitudeSource: AttitudeSource {
-    var sampleHandler: ((AttitudeSample) -> Void)?
+final class SurfaceFixedMotionSource: SurfaceAttitudeSource {
+    var sampleHandler: ((SurfaceAttitudeSample) -> Void)?
     var failureHandler: (() -> Void)?
 
     private let orientation: simd_quatf
@@ -76,7 +76,7 @@ final class FixedAttitudeSource: AttitudeSource {
         emit()
         task = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(AttitudeTiming.updateInterval))
+                try? await Task.sleep(for: .seconds(SurfaceMotionTiming.updateInterval))
                 guard !Task.isCancelled else { break }
                 self?.emit()
             }
@@ -90,7 +90,7 @@ final class FixedAttitudeSource: AttitudeSource {
 
     private func emit() {
         sampleHandler?(
-            AttitudeSample(
+            SurfaceAttitudeSample(
                 orientation: orientation,
                 timestamp: ProcessInfo.processInfo.systemUptime,
                 isDeterministic: true
@@ -101,21 +101,21 @@ final class FixedAttitudeSource: AttitudeSource {
 
 // MARK: - Device motion, shared
 
-/// The hardware behind `SharedDeviceMotion`.
+/// The hardware behind `SurfaceSharedMotion`.
 ///
 /// A protocol so the sharing and the reference counting can be tested. The
 /// Simulator reports no device motion, which is where those tests run.
 @MainActor
-protocol MotionDriver: AnyObject {
+protocol SurfaceMotionDriver: AnyObject {
     var isAvailable: Bool { get }
 
     /// `nil` means readings failed and will not resume.
-    func start(interval: TimeInterval, handler: @escaping (AttitudeSample?) -> Void)
+    func start(interval: TimeInterval, handler: @escaping (SurfaceAttitudeSample?) -> Void)
     func stop()
 }
 
 @MainActor
-final class CoreMotionDriver: MotionDriver {
+final class SurfaceCoreMotionDriver: SurfaceMotionDriver {
     private let manager = CMMotionManager()
 
     var isAvailable: Bool {
@@ -130,7 +130,7 @@ final class CoreMotionDriver: MotionDriver {
         manager.stopDeviceMotionUpdates()
     }
 
-    func start(interval: TimeInterval, handler: @escaping (AttitudeSample?) -> Void) {
+    func start(interval: TimeInterval, handler: @escaping (SurfaceAttitudeSample?) -> Void) {
         guard !manager.isDeviceMotionActive else { return }
 
         manager.deviceMotionUpdateInterval = interval
@@ -147,7 +147,7 @@ final class CoreMotionDriver: MotionDriver {
 
                 let q = motion.attitude.quaternion
                 handler(
-                    AttitudeSample(
+                    SurfaceAttitudeSample(
                         orientation: simd_quatf(
                             ix: Float(q.x),
                             iy: Float(q.y),
@@ -172,40 +172,40 @@ final class CoreMotionDriver: MotionDriver {
 /// spend twice the battery and can report attitudes from different instants,
 /// which lights two surfaces differently in the same frame.
 @MainActor
-final class SharedDeviceMotion {
-    static let shared = SharedDeviceMotion(driver: CoreMotionDriver())
+final class SurfaceSharedMotion {
+    static let shared = SurfaceSharedMotion(driver: SurfaceCoreMotionDriver())
 
-    private let driver: any MotionDriver
+    private let driver: any SurfaceMotionDriver
     private var subscribers: [ObjectIdentifier: WeakSubscriber] = [:]
     private(set) var isRunning = false
 
     private struct WeakSubscriber {
-        weak var value: DeviceMotionAttitudeSource?
+        weak var value: SurfaceDeviceMotionSource?
     }
 
-    init(driver: any MotionDriver) {
+    init(driver: any SurfaceMotionDriver) {
         self.driver = driver
     }
 
     /// How many surfaces are reading. Reference count for the driver.
     var subscriberCount: Int { subscribers.count }
 
-    func add(_ subscriber: DeviceMotionAttitudeSource) {
+    func add(_ subscriber: SurfaceDeviceMotionSource) {
         subscribers[ObjectIdentifier(subscriber)] = WeakSubscriber(value: subscriber)
 
         guard !isRunning, driver.isAvailable else { return }
         isRunning = true
-        driver.start(interval: AttitudeTiming.updateInterval) { [weak self] sample in
+        driver.start(interval: SurfaceMotionTiming.updateInterval) { [weak self] sample in
             self?.deliver(sample)
         }
     }
 
-    func remove(_ subscriber: DeviceMotionAttitudeSource) {
+    func remove(_ subscriber: SurfaceDeviceMotionSource) {
         subscribers[ObjectIdentifier(subscriber)] = nil
         stopIfIdle()
     }
 
-    private func deliver(_ sample: AttitudeSample?) {
+    private func deliver(_ sample: SurfaceAttitudeSample?) {
         // Prune before delivering. A surface can leave the hierarchy and be
         // released before it unsubscribes, and the driver has to stop once the
         // last one goes rather than stream to nobody.
@@ -229,17 +229,17 @@ final class SharedDeviceMotion {
 
 /// One surface's view of the shared reader.
 ///
-/// Holds no hardware. `SharedDeviceMotion` keeps only a weak reference to this,
+/// Holds no hardware. `SurfaceSharedMotion` keeps only a weak reference to this,
 /// so forgetting to call `stop()` costs one sample interval rather than leaking
 /// a reader.
 @MainActor
-final class DeviceMotionAttitudeSource: AttitudeSource {
-    var sampleHandler: ((AttitudeSample) -> Void)?
+final class SurfaceDeviceMotionSource: SurfaceAttitudeSource {
+    var sampleHandler: ((SurfaceAttitudeSample) -> Void)?
     var failureHandler: (() -> Void)?
 
-    private let hub: SharedDeviceMotion
+    private let hub: SurfaceSharedMotion
 
-    init(hub: SharedDeviceMotion = .shared) {
+    init(hub: SurfaceSharedMotion = .shared) {
         self.hub = hub
     }
 
@@ -251,7 +251,7 @@ final class DeviceMotionAttitudeSource: AttitudeSource {
         hub.remove(self)
     }
 
-    func receive(_ sample: AttitudeSample?) {
+    func receive(_ sample: SurfaceAttitudeSample?) {
         guard let sample else {
             failureHandler?()
             return

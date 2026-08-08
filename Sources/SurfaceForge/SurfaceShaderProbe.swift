@@ -9,7 +9,7 @@ import SwiftUI
 ///
 /// Temporary. Delete once `Surface` ships a real material and the demo app
 /// proves the same thing by looking correct.
-struct ShaderProbe: View {
+struct SurfaceShaderProbe: View {
     var body: some View {
         Rectangle()
             .fill(.gray)
@@ -19,5 +19,5 @@ struct ShaderProbe: View {
 }
 
 #Preview {
-    ShaderProbe()
+    SurfaceShaderProbe()
 }

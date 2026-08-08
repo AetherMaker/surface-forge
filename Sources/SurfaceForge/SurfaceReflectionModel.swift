@@ -6,10 +6,10 @@ import simd
 /// the small 3D tilt the surface itself carries.
 ///
 /// One of these per surface. The hardware behind it is shared, see
-/// ``SharedDeviceMotion``.
+/// ``SurfaceSharedMotion``.
 @MainActor
 @Observable
-final class ReflectionModel {
+final class SurfaceReflectionModel {
     // MARK: Feel
 
     /// 0.65 read as a permanent 35% haircut on every tilt angle, and the
@@ -86,11 +86,11 @@ final class ReflectionModel {
     /// Built on first use, not in `init`.
     ///
     /// `State.init(wrappedValue:)` takes a plain value rather than an
-    /// autoclosure, so `@State private var model = ReflectionModel()` runs this
+    /// autoclosure, so `@State private var model = SurfaceReflectionModel()` runs this
     /// initializer on every construction of the view that declares it and
     /// SwiftUI discards all but the first. Nothing the source owns is needed
     /// before `start()`, so nothing is built before then.
-    private var source: any AttitudeSource {
+    private var source: any SurfaceAttitudeSource {
         if let builtSource { return builtSource }
 
         let source = injectedSource ?? tiltSource.makeAttitudeSource()
@@ -108,7 +108,7 @@ final class ReflectionModel {
     /// A computed property over an optional rather than `lazy`, so the stop
     /// paths can ask whether a source exists without creating one to ask.
     @ObservationIgnored
-    private var builtSource: (any AttitudeSource)?
+    private var builtSource: (any SurfaceAttitudeSource)?
 
     @ObservationIgnored
     private var tiltSource: SurfaceTiltSource
@@ -116,7 +116,7 @@ final class ReflectionModel {
     /// Held rather than adopted, so injection stays eager-free too. A test's
     /// double is no reason to wire handlers before the model is used.
     @ObservationIgnored
-    private var injectedSource: (any AttitudeSource)?
+    private var injectedSource: (any SurfaceAttitudeSource)?
 
     private var reduceMotion = false
     private var isActive = false
@@ -137,7 +137,7 @@ final class ReflectionModel {
     }
 
     /// Drives the model from a source of the caller's choosing, for tests.
-    init(source: any AttitudeSource) {
+    init(source: any SurfaceAttitudeSource) {
         tiltSource = .deviceMotion
         injectedSource = source
     }
@@ -239,7 +239,7 @@ final class ReflectionModel {
 
     // MARK: Sampling
 
-    private func consume(_ sample: AttitudeSample) {
+    private func consume(_ sample: SurfaceAttitudeSample) {
         guard !reduceMotion else { return }
         guard isFinite(sample.orientation), sample.timestamp.isFinite else {
             resetToRest()

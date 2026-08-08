@@ -6,13 +6,13 @@ import simd
 
 /// Counts what the real driver would do to the hardware, without any.
 @MainActor
-private final class StubDriver: MotionDriver {
+private final class StubDriver: SurfaceMotionDriver {
     var isAvailable = true
     var startCount = 0
     var stopCount = 0
-    private var handler: ((AttitudeSample?) -> Void)?
+    private var handler: ((SurfaceAttitudeSample?) -> Void)?
 
-    func start(interval: TimeInterval, handler: @escaping (AttitudeSample?) -> Void) {
+    func start(interval: TimeInterval, handler: @escaping (SurfaceAttitudeSample?) -> Void) {
         startCount += 1
         self.handler = handler
     }
@@ -22,13 +22,13 @@ private final class StubDriver: MotionDriver {
         handler = nil
     }
 
-    func send(_ sample: AttitudeSample?) {
+    func send(_ sample: SurfaceAttitudeSample?) {
         handler?(sample)
     }
 }
 
-private func sample(pitch: Float) -> AttitudeSample {
-    AttitudeSample(
+private func sample(pitch: Float) -> SurfaceAttitudeSample {
+    SurfaceAttitudeSample(
         orientation: simd_quatf(angle: pitch, axis: SIMD3(1, 0, 0)),
         timestamp: 0
     )
@@ -36,13 +36,13 @@ private func sample(pitch: Float) -> AttitudeSample {
 
 @MainActor
 @Suite("Shared device motion")
-struct SharedDeviceMotionTests {
+struct SurfaceSharedMotionTests {
     @Test("Ten surfaces start one reader")
     func tenSurfacesStartOneReader() {
         let driver = StubDriver()
-        let hub = SharedDeviceMotion(driver: driver)
+        let hub = SurfaceSharedMotion(driver: driver)
 
-        let sources = (0..<10).map { _ in DeviceMotionAttitudeSource(hub: hub) }
+        let sources = (0..<10).map { _ in SurfaceDeviceMotionSource(hub: hub) }
         for source in sources { source.start() }
 
         #expect(hub.subscriberCount == 10)
@@ -52,10 +52,10 @@ struct SharedDeviceMotionTests {
     @Test("The reader stops only when the last surface stops")
     func readerStopsWithTheLastSurface() {
         let driver = StubDriver()
-        let hub = SharedDeviceMotion(driver: driver)
+        let hub = SurfaceSharedMotion(driver: driver)
 
-        let first = DeviceMotionAttitudeSource(hub: hub)
-        let second = DeviceMotionAttitudeSource(hub: hub)
+        let first = SurfaceDeviceMotionSource(hub: hub)
+        let second = SurfaceDeviceMotionSource(hub: hub)
         first.start()
         second.start()
 
@@ -71,9 +71,9 @@ struct SharedDeviceMotionTests {
     @Test("Restarting after idle starts the reader again")
     func restartingStartsTheReaderAgain() {
         let driver = StubDriver()
-        let hub = SharedDeviceMotion(driver: driver)
+        let hub = SurfaceSharedMotion(driver: driver)
 
-        let source = DeviceMotionAttitudeSource(hub: hub)
+        let source = SurfaceDeviceMotionSource(hub: hub)
         source.start()
         source.stop()
         source.start()
@@ -85,10 +85,10 @@ struct SharedDeviceMotionTests {
     @Test("Every surface sees the same reading")
     func everySurfaceSeesTheSameReading() {
         let driver = StubDriver()
-        let hub = SharedDeviceMotion(driver: driver)
+        let hub = SurfaceSharedMotion(driver: driver)
 
         var seen: [Float] = []
-        let sources = (0..<3).map { _ in DeviceMotionAttitudeSource(hub: hub) }
+        let sources = (0..<3).map { _ in SurfaceDeviceMotionSource(hub: hub) }
         for source in sources {
             source.sampleHandler = { seen.append($0.orientation.angle) }
             source.start()
@@ -103,10 +103,10 @@ struct SharedDeviceMotionTests {
     @Test("A released surface stops counting, and the reader stops with it")
     func releasedSurfaceStopsTheReader() {
         let driver = StubDriver()
-        let hub = SharedDeviceMotion(driver: driver)
+        let hub = SurfaceSharedMotion(driver: driver)
 
         do {
-            let source = DeviceMotionAttitudeSource(hub: hub)
+            let source = SurfaceDeviceMotionSource(hub: hub)
             source.start()
             #expect(hub.subscriberCount == 1)
         }
@@ -123,10 +123,10 @@ struct SharedDeviceMotionTests {
     @Test("A failed reading reaches every surface as a failure")
     func failureReachesEverySurface() {
         let driver = StubDriver()
-        let hub = SharedDeviceMotion(driver: driver)
+        let hub = SurfaceSharedMotion(driver: driver)
 
         var failures = 0
-        let sources = (0..<2).map { _ in DeviceMotionAttitudeSource(hub: hub) }
+        let sources = (0..<2).map { _ in SurfaceDeviceMotionSource(hub: hub) }
         for source in sources {
             source.failureHandler = { failures += 1 }
             source.start()
@@ -141,9 +141,9 @@ struct SharedDeviceMotionTests {
     func noReaderWithoutMotion() {
         let driver = StubDriver()
         driver.isAvailable = false
-        let hub = SharedDeviceMotion(driver: driver)
+        let hub = SurfaceSharedMotion(driver: driver)
 
-        DeviceMotionAttitudeSource(hub: hub).start()
+        SurfaceDeviceMotionSource(hub: hub).start()
 
         #expect(driver.startCount == 0)
         #expect(hub.isRunning == false)
@@ -152,12 +152,12 @@ struct SharedDeviceMotionTests {
 
 @MainActor
 @Suite("A held angle")
-struct FixedAttitudeSourceTests {
+struct SurfaceFixedMotionSourceTests {
     /// Rotating the outward normal is the check that matters. Comparing
     /// quaternion components would only restate how the source builds one.
     private func normal(pitch: Double, roll: Double) -> SIMD3<Float> {
         var seen = SIMD3<Float>.zero
-        let source = FixedAttitudeSource(pitch: pitch, roll: roll)
+        let source = SurfaceFixedMotionSource(pitch: pitch, roll: roll)
         source.sampleHandler = { seen = $0.orientation.act(SIMD3(0, 0, 1)) }
         source.start()
         source.stop()
@@ -188,8 +188,8 @@ struct FixedAttitudeSourceTests {
 
     @Test("Readings are marked deterministic, so the model skips its filter")
     func readingsAreDeterministic() {
-        var seen: AttitudeSample?
-        let source = FixedAttitudeSource(pitch: 10, roll: 10)
+        var seen: SurfaceAttitudeSample?
+        let source = SurfaceFixedMotionSource(pitch: 10, roll: 10)
         source.sampleHandler = { seen = $0 }
         source.start()
         source.stop()
@@ -200,7 +200,7 @@ struct FixedAttitudeSourceTests {
     @Test("A reading arrives before the first interval elapses")
     func firstReadingIsImmediate() {
         var count = 0
-        let source = FixedAttitudeSource(pitch: 0, roll: 0)
+        let source = SurfaceFixedMotionSource(pitch: 0, roll: 0)
         source.sampleHandler = { _ in count += 1 }
         source.start()
         source.stop()
@@ -216,7 +216,7 @@ struct SurfaceTiltSourceTests {
     func deviceMotionSharesTheReader() {
         #expect(
             SurfaceTiltSource.deviceMotion.makeAttitudeSource()
-                is DeviceMotionAttitudeSource
+                is SurfaceDeviceMotionSource
         )
     }
 
@@ -224,7 +224,7 @@ struct SurfaceTiltSourceTests {
     func fixedBuildsAHeldSource() {
         #expect(
             SurfaceTiltSource.fixed(pitch: 1, roll: 2).makeAttitudeSource()
-                is FixedAttitudeSource
+                is SurfaceFixedMotionSource
         )
     }
 }

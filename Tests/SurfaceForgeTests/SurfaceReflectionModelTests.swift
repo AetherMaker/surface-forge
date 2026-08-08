@@ -7,8 +7,8 @@ import simd
 /// A source the test drives by hand, so the model can be stepped through exact
 /// attitudes at exact timestamps.
 @MainActor
-private final class ManualAttitudeSource: AttitudeSource {
-    var sampleHandler: ((AttitudeSample) -> Void)?
+private final class ManualMotionSource: SurfaceAttitudeSource {
+    var sampleHandler: ((SurfaceAttitudeSample) -> Void)?
     var failureHandler: (() -> Void)?
     var startCount = 0
     var stopCount = 0
@@ -23,7 +23,7 @@ private final class ManualAttitudeSource: AttitudeSource {
         deterministic: Bool = false
     ) {
         sampleHandler?(
-            AttitudeSample(
+            SurfaceAttitudeSample(
                 orientation: simd_quatf(angle: pitch, axis: SIMD3(1, 0, 0))
                     * simd_quatf(angle: roll, axis: SIMD3(0, 1, 0)),
                 timestamp: timestamp,
@@ -32,14 +32,14 @@ private final class ManualAttitudeSource: AttitudeSource {
         )
     }
 
-    func send(_ sample: AttitudeSample) { sampleHandler?(sample) }
+    func send(_ sample: SurfaceAttitudeSample) { sampleHandler?(sample) }
     func fail() { failureHandler?() }
 }
 
 @MainActor
-private func started() -> (ReflectionModel, ManualAttitudeSource) {
-    let source = ManualAttitudeSource()
-    let model = ReflectionModel(source: source)
+private func started() -> (SurfaceReflectionModel, ManualMotionSource) {
+    let source = ManualMotionSource()
+    let model = SurfaceReflectionModel(source: source)
     model.setActive(true)
     return (model, source)
 }
@@ -208,17 +208,17 @@ struct TiltTests {
             source.send(roll: Float(i) * 0.1, at: t)
         }
 
-        let ceiling = Double(ReflectionModel.tiltCeiling(reduceMotion: false))
+        let ceiling = Double(SurfaceReflectionModel.tiltCeiling(reduceMotion: false))
         #expect(model.tiltAngle <= ceiling + 1e-6)
     }
 
     @Test("Spinning the device in its own plane does not lean the surface")
     func inPlaneSpinDoesNotLean() {
-        let source = ManualAttitudeSource()
-        let model = ReflectionModel(source: source)
+        let source = ManualMotionSource()
+        let model = SurfaceReflectionModel(source: source)
         model.setActive(true)
 
-        source.send(AttitudeSample(orientation: simd_quatf(angle: 0, axis: SIMD3(0, 0, 1)), timestamp: 1.0))
+        source.send(SurfaceAttitudeSample(orientation: simd_quatf(angle: 0, axis: SIMD3(0, 0, 1)), timestamp: 1.0))
 
         // A rotation about z is the phone spinning in its own plane. The surface
         // is printed on that plane, so it spins with it and must not
@@ -227,7 +227,7 @@ struct TiltTests {
         for i in 1...40 {
             t += 1.0 / 30
             source.send(
-                AttitudeSample(
+                SurfaceAttitudeSample(
                     orientation: simd_quatf(angle: Float(i) * 0.03, axis: SIMD3(0, 0, 1)),
                     timestamp: t
                 )
@@ -243,8 +243,8 @@ struct TiltTests {
 struct ReflectionLifecycleTests {
     @Test("Nothing is built until the model goes active")
     func nothingIsBuiltUntilActive() {
-        let source = ManualAttitudeSource()
-        _ = ReflectionModel(source: source)
+        let source = ManualMotionSource()
+        _ = SurfaceReflectionModel(source: source)
 
         #expect(source.startCount == 0)
     }
@@ -301,7 +301,7 @@ struct ReflectionLifecycleTests {
         source.send(roll: 0.3, at: 1.0, deterministic: true)
 
         source.send(
-            AttitudeSample(
+            SurfaceAttitudeSample(
                 orientation: simd_quatf(ix: .nan, iy: 0, iz: 0, r: 1),
                 timestamp: 2.0
             )
@@ -327,14 +327,14 @@ struct ReflectionLifecycleTests {
 struct RotationVectorTests {
     @Test("Identity maps to zero")
     func identityMapsToZero() {
-        let v = ReflectionModel.rotationVector(simd_quatf(angle: 0, axis: SIMD3(0, 0, 1)))
+        let v = SurfaceReflectionModel.rotationVector(simd_quatf(angle: 0, axis: SIMD3(0, 0, 1)))
         #expect(simd_length(v) < 1e-6)
     }
 
     @Test("The magnitude is the rotation angle")
     func magnitudeIsTheAngle() {
         for angle in [Float(0.1), 0.5, 1.0, 2.0, 3.0] {
-            let v = ReflectionModel.rotationVector(
+            let v = SurfaceReflectionModel.rotationVector(
                 simd_quatf(angle: angle, axis: SIMD3(0, 1, 0))
             )
             #expect(abs(simd_length(v) - angle) < 1e-4, "angle \(angle) gave \(simd_length(v))")
@@ -347,7 +347,7 @@ struct RotationVectorTests {
         // differ by a half turn. Without the branch the surface snaps through 180
         // degrees at the wrap.
         let q = simd_quatf(angle: 3.4, axis: SIMD3(0, 1, 0))
-        let v = ReflectionModel.rotationVector(q)
+        let v = SurfaceReflectionModel.rotationVector(q)
 
         #expect(simd_length(v) <= .pi + 1e-4)
     }

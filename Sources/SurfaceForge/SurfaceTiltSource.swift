@@ -31,12 +31,12 @@ public struct SurfaceTiltSource: Sendable, Hashable {
     }
 
     @MainActor
-    func makeAttitudeSource() -> any AttitudeSource {
+    func makeAttitudeSource() -> any SurfaceAttitudeSource {
         switch kind {
         case .deviceMotion:
-            DeviceMotionAttitudeSource()
+            SurfaceDeviceMotionSource()
         case let .fixed(pitch, roll):
-            FixedAttitudeSource(pitch: pitch, roll: roll)
+            SurfaceFixedMotionSource(pitch: pitch, roll: roll)
         }
     }
 }
