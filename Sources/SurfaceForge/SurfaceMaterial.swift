@@ -62,7 +62,9 @@ public struct SurfaceMaterial: Sendable, Hashable {
         name: "Brass"
     )
 
-    /// The only built-in that changes the surface's *value* rather than its hue.
+    /// The dark near-neutral. Silver is the bright one; this is the same absence
+    /// of hue at a much lower value, which is what separates gunmetal from grey
+    /// silver.
     public static let gunmetal = SurfaceMaterial(
         tint: SIMD3(0.62, 0.65, 0.70),
         name: "Gunmetal"
