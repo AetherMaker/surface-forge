@@ -21,52 +21,76 @@ public struct SurfaceMaterial: Sendable, Hashable {
     /// literal colours is the easiest way to be confused by this type.
     let tint: SIMD3<Float>
 
+    /// How tight the travelling band is. Higher is narrower and harder edged.
+    ///
+    /// A polished metal returns a small hard band; a rough one scatters the same
+    /// light into a wide soft one. Measured across the surface, 15 gives a
+    /// falloff of 16 luma levels and 60 gives 26. Past about 100 the band stops
+    /// narrowing, so the useful range runs downward from there.
+    let highlightTightness: Float
+
     /// What the material is called when something has to say.
     public let name: String
 
-    init(tint: SIMD3<Float>, name: String) {
+    init(
+        tint: SIMD3<Float>,
+        highlightTightness: Float = 60,
+        name: String
+    ) {
         self.tint = tint
+        self.highlightTightness = highlightTightness
         self.name = name
     }
 
     // MARK: - The metals
 
-    // The tint says *which* metal, not how metal behaves, so it is the one thing
-    // that varies without re-solving the shader's calibrated set. Each is three
-    // floats and nothing else.
+    // Each carries a hue and a tightness. The tint says which metal it is; the
+    // tightness says how polished it is, which is what separates a hard bright
+    // band from a wide soft one.
 
     public static let gold = SurfaceMaterial(
         tint: SIMD3(1.00, 0.72, 0.22),
+        highlightTightness: 70,
         name: "Gold"
     )
 
-    /// Keeps a faint cool cast rather than being pure white, because a perfectly
-    /// neutral metal reads as grey plastic.
+    /// The most reflective of the six, and it gets the hardest highlight.
+    ///
+    /// Its tint keeps a faint cool cast rather than being pure white, because a
+    /// perfectly neutral metal reads as grey plastic.
     public static let silver = SurfaceMaterial(
         tint: SIMD3(0.95, 0.97, 1.00),
+        highlightTightness: 110,
         name: "Silver"
     )
 
+    /// Gold alloyed toward copper, and it takes light the same way gold does.
     public static let roseGold = SurfaceMaterial(
         tint: SIMD3(1.00, 0.72, 0.60),
+        highlightTightness: 65,
         name: "Rose gold"
     )
 
+    /// Softer than the golds. A broader, dimmer highlight is most of what
+    /// separates copper from rose gold, since their hues are close.
     public static let copper = SurfaceMaterial(
         tint: SIMD3(0.98, 0.55, 0.35),
+        highlightTightness: 35,
         name: "Copper"
     )
 
     public static let brass = SurfaceMaterial(
         tint: SIMD3(0.94, 0.79, 0.42),
+        highlightTightness: 50,
         name: "Brass"
     )
 
-    /// The dark near-neutral. Silver is the bright one; this is the same absence
-    /// of hue at a much lower value, which is what separates gunmetal from grey
-    /// silver.
+    /// The dark near-neutral, and the only matte one. Silver is the bright hard
+    /// metal; this is the same absence of hue at a much lower value with a
+    /// highlight to match.
     public static let gunmetal = SurfaceMaterial(
         tint: SIMD3(0.62, 0.65, 0.70),
+        highlightTightness: 18,
         name: "Gunmetal"
     )
 

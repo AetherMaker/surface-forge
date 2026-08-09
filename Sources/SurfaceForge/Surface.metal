@@ -43,11 +43,10 @@ constant float kHorizonRadiance = 0.42;
 constant float kFloorRadiance   = 0.10;
 constant float kWindowRadiance  = 5.5;
 
-// 60 gives an 8.69-degree half-width. The reflection vector sweeps about 30
-// degrees edge to edge, 44 once the bow below is added, so the window covers
-// roughly a third of the width and has a real edge instead of washing the whole
-// surface.
-constant float kWindowExponent = 60.0;
+// How tight the window is arrives as a uniform, because it is what separates a
+// polished metal from a rough one. 60 gives an 8.69-degree half-width, which
+// covers roughly a third of the surface. Lower spreads it, and past about 100 it
+// stops narrowing.
 
 // Legibility. Content has to stay readable under the metal: a dim sheen over
 // dark marks, full effect over the bare surface.
@@ -256,7 +255,8 @@ inline float3 surfaceNormal(float2 p) {
                           // home instead, in SurfaceShading.lights(). At 0
                           // nothing below reads either direction, which is what
                           // lets the light be re-placed with nothing moving.
-    float3 metalTint      // which metal
+    float3 metalTint,     // which metal
+    float windowExponent  // how tight this metal's travelling band is
 ) {
     using namespace SurfaceForge;
 
@@ -310,7 +310,7 @@ inline float3 surfaceNormal(float2 p) {
     // park the light at zero gleam with nothing moving on screen. Gating the
     // whole coat instead would also take the sky, and the surface would go
     // visibly flatter.
-    float windowCoupling      = pow(saturate(dot(R, keyDirection)), kWindowExponent)
+    float windowCoupling      = pow(saturate(dot(R, keyDirection)), windowExponent)
                               * gleamAmount;
     float environmentRadiance = sampleAnalyticEnvironment(R, windowCoupling);
 

@@ -24,6 +24,7 @@ extension View {
         )
         let amount = Float(min(max(gleam, 0), 1))
         let tint = material.tint
+        let tightness = material.highlightTightness
         let offset = min(max(lightOffset, -1), 1)
 
         return visualEffect { view, proxy in
@@ -66,7 +67,8 @@ extension View {
                     .float3(key.x, key.y, key.z),
                     .float3(diffuse.x, diffuse.y, diffuse.z),
                     .float(amount),
-                    .float3(tint.x, tint.y, tint.z)
+                    .float3(tint.x, tint.y, tint.z),
+                    .float(tightness)
                 )
             )
         }

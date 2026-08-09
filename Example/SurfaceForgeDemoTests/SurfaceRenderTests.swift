@@ -99,6 +99,44 @@ private func mean(_ pixels: [(r: Int, g: Int, b: Int)]) -> (r: Int, g: Int, b: I
     )
 }
 
+/// How sharply the highlight falls off, measured across the surface.
+///
+/// The reference table reads the middle of the card, which is the highlight's
+/// peak, and at a peak a tight highlight and a broad one are both at full
+/// brightness. Sharpness only shows in the *falloff*, so it needs its own
+/// reading.
+///
+/// Returns the drop in luma from the brightest column to the dimmest, sampling
+/// nine columns across the width. A hard highlight falls away fast and gives a
+/// large number; a matte one barely falls at all.
+@MainActor
+private func highlightFalloff<V: View>(of view: V) async -> Int {
+    let raw = await rawPixels(of: view, size: CGSize(width: 353, height: 220))
+    guard !raw.pixels.isEmpty else { return 0 }
+
+    var columns: [Double] = []
+    for column in 0..<9 {
+        // Inset from both ends, clear of the rounded corners and the rim.
+        let x0 = 30 + (raw.width - 60) * column / 9
+        let x1 = 30 + (raw.width - 60) * (column + 1) / 9
+        var sum = 0.0
+        var count = 0
+        for y in (raw.height / 3)..<(2 * raw.height / 3) {
+            for x in x0..<x1 {
+                let i = (y * raw.width + x) * 4
+                sum += luminance(
+                    (Int(raw.pixels[i]), Int(raw.pixels[i + 1]), Int(raw.pixels[i + 2]))
+                )
+                count += 1
+            }
+        }
+        columns.append(count == 0 ? 0 : sum / Double(count))
+    }
+
+    guard let high = columns.max(), let low = columns.min() else { return 0 }
+    return Int(high - low)
+}
+
 /// Rec. 601 luma, the same weighting the shader applies to content.
 private func luminance(_ c: (r: Int, g: Int, b: Int)) -> Double {
     let r = Double(c.r) * 0.299
@@ -293,6 +331,24 @@ struct SurfaceRenderTests {
             .appendingPathComponent("sampled-regions.png")
         try? annotated.pngData()?.write(to: url)
         #expect(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    @Test("A matte material spreads its band wider than a polished one")
+    func matteSpreadsWiderThanPolished() async {
+        // The whole point of per-material tightness. Gunmetal is the widest at 18
+        // and gold the tightest that still has room to show it at 70, so this
+        // pair is the largest gap the six produce: 20 against 26.
+        //
+        // An ordering rather than six pinned numbers, because several of the
+        // materials sit one or two levels apart and a test that tight would be
+        // noise. This one fails as soon as the tightness values are flattened.
+        let matte = await highlightFalloff(of: surface(.gunmetal))
+        let polished = await highlightFalloff(of: surface(.gold))
+
+        #expect(
+            polished - matte >= 4,
+            "gold falls off by \(polished) and gunmetal by \(matte), too close to tell apart"
+        )
     }
 
     @Test("Text stays readable with the light sitting on it")
