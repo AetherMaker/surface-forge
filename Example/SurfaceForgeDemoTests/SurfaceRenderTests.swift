@@ -5,24 +5,24 @@ import UIKit
 
 // Renders a surface for real and reads its pixels back.
 //
-// These live in the demo app rather than in the package because they need a
-// window scene, which a SwiftPM test bundle does not have. Without one nothing
-// reaches the render server and every pixel reads back black, including a solid
-// red control.
+// These live in the demo app because they need a window scene, which a SwiftPM
+// test bundle does not have. Without one nothing reaches the render server and
+// every pixel reads back black.
 //
-// They use only the public API, so they check what an adopter would get rather
-// than what the internals happen to do.
+// They use only the public API, so they check what an adopter gets rather than
+// what the internals happen to do.
 
 /// Draws a view through the render server and returns its middle band.
 ///
 /// `ImageRenderer` cannot do this job: it does not run Metal view effects, so it
 /// would return the bare stock and report success while the material never ran.
 @MainActor
-private func renderedPixels<V: View>(
+private func rawPixels<V: View>(
     of view: V,
-    size: CGSize = CGSize(width: 353, height: 220)
-) async -> [(r: Int, g: Int, b: Int)] {
+    size: CGSize
+) async -> (pixels: [UInt8], width: Int, height: Int) {
     let host = UIHostingController(rootView: view)
+    host.safeAreaRegions = []
     host.view.frame = CGRect(origin: .zero, size: size)
     host.view.backgroundColor = .black
 
@@ -48,7 +48,7 @@ private func renderedPixels<V: View>(
         host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
     }
 
-    guard let cg = image.cgImage else { return [] }
+    guard let cg = image.cgImage else { return ([], 0, 0) }
 
     let width = cg.width
     let height = cg.height
@@ -64,17 +64,27 @@ private func renderedPixels<V: View>(
             space: space,
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         )
-    else { return [] }
+    else { return ([], 0, 0) }
 
     context.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
+    return (raw, width, height)
+}
 
-    // The middle band only, away from the corners the mask rounds off and away
-    // from the rim's hairline.
+/// The middle band, away from the corners the mask rounds off and away from the
+/// rim's hairline.
+@MainActor
+private func renderedPixels<V: View>(
+    of view: V,
+    size: CGSize = CGSize(width: 353, height: 220)
+) async -> [(r: Int, g: Int, b: Int)] {
+    let raw = await rawPixels(of: view, size: size)
+    guard !raw.pixels.isEmpty else { return [] }
+
     var pixels: [(r: Int, g: Int, b: Int)] = []
-    for y in (height / 3)..<(2 * height / 3) {
-        for x in (width / 3)..<(2 * width / 3) {
-            let i = (y * width + x) * 4
-            pixels.append((Int(raw[i]), Int(raw[i + 1]), Int(raw[i + 2])))
+    for y in (raw.height / 3)..<(2 * raw.height / 3) {
+        for x in (raw.width / 3)..<(2 * raw.width / 3) {
+            let i = (y * raw.width + x) * 4
+            pixels.append((Int(raw.pixels[i]), Int(raw.pixels[i + 1]), Int(raw.pixels[i + 2])))
         }
     }
     return pixels
@@ -106,15 +116,74 @@ private func surface(_ material: SurfaceMaterial, gleam: Double = 1) -> some Vie
         .surfaceTiltSource(.fixed(pitch: -8, roll: 14))
 }
 
+// MARK: - Legibility
+
+/// Where the ink block sits, and where the bare surface beside it is read.
+///
+/// Placed, not found. The test draws the block at a known offset and measures
+/// that rectangle, rather than searching the render for dark pixels.
+private enum InkPatch {
+    static let size = CGSize(width: 120, height: 60)
+    /// `contentPadding` is 20, and the block is top-leading inside that.
+    static let ink = CGRect(x: 20, y: 20, width: 120, height: 60)
+    /// Same rows, clear of the block and clear of the far edge.
+    static let bare = CGRect(x: 170, y: 20, width: 120, height: 60)
+}
+
+/// A surface carrying one solid block of `.primary`, which is what a user's text
+/// resolves to.
+@MainActor
+private func inkedSurface(
+    _ material: SurfaceMaterial,
+    lightOffset: Double,
+    inkStyle: HierarchicalShapeStyle = .primary
+) -> some View {
+    Surface(material: material) {
+        Rectangle()
+            .foregroundStyle(inkStyle)
+            .frame(width: InkPatch.size.width, height: InkPatch.size.height)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+    .frame(width: 353, height: 220)
+    .surfaceLightOffset(lightOffset)
+    .surfaceTiltSource(.fixed(pitch: -8, roll: 14))
+}
+
+/// How far the ink sits below the surface beside it, in luma levels.
+///
+/// Positive means the ink is darker, which is the readable direction. Near zero
+/// means the ink has been washed out by the light crossing it.
+@MainActor
+private func inkContrast<V: View>(of view: V) async -> Int {
+    let raw = await rawPixels(of: view, size: CGSize(width: 353, height: 220))
+    guard !raw.pixels.isEmpty else { return 0 }
+
+    func read(_ rect: CGRect) -> Double {
+        var sum = 0.0
+        var count = 0
+        for y in Int(rect.minY)..<Int(rect.maxY) {
+            for x in Int(rect.minX)..<Int(rect.maxX) {
+                guard x < raw.width, y < raw.height else { continue }
+                let i = (y * raw.width + x) * 4
+                sum += luminance(
+                    (Int(raw.pixels[i]), Int(raw.pixels[i + 1]), Int(raw.pixels[i + 2]))
+                )
+                count += 1
+            }
+        }
+        return count == 0 ? 0 : sum / Double(count)
+    }
+
+    return Int(read(InkPatch.bare) - read(InkPatch.ink))
+}
+
 @MainActor
 @Suite("What a surface renders")
 struct SurfaceRenderTests {
     @Test("The harness draws anything at all")
     func harnessDrawsAnything() async {
-        // The positive control, and the reason the rest of this file can be
-        // trusted. Every test below reads pixels back, and "all black" is what
-        // both a broken harness and a broken shader produce. Without this there
-        // is no way to tell them apart.
+        // A broken harness and a broken shader both read back as all black.
+        // Without this there is no telling them apart.
         let control = mean(await renderedPixels(of: Color(red: 1, green: 0, blue: 0)))
 
         #expect(control.r > 200, "the harness itself drew nothing: \(control)")
@@ -163,9 +232,9 @@ struct SurfaceRenderTests {
 
     /// What each material renders on bare stock, at the fixed angle above.
     ///
-    /// The point of the whole file. Any change to the shader, the stock, the
-    /// lights or a tint moves one of these, and this says which and by how much.
-    /// Update them deliberately, never to make a run go green.
+    /// Any change to the shader, the stock, the lights or a tint moves one of
+    /// these, and this says which and by how much. Update them deliberately,
+    /// never to make a run go green.
     static let reference: [String: (r: Int, g: Int, b: Int)] = [
         "Gold": (241, 227, 164),
         "Silver": (240, 240, 241),
@@ -174,6 +243,90 @@ struct SurfaceRenderTests {
         "Brass": (239, 233, 195),
         "Gunmetal": (218, 221, 225),
     ]
+
+    /// How far the ink must sit below the surface beside it, in luma levels, with
+    /// the light at its worst position.
+    ///
+    /// Halfway between two measured points. At full legibility damping the worst
+    /// material reads 72; with the damping switched off it falls to 48. 60 sits
+    /// clear of both by the same margin, and far above the 8 levels a surface
+    /// with no ink on it produces from its own gradient.
+    static let minimumInkContrast = 60
+
+    /// Writes the render with the two sampled rectangles drawn on it.
+    ///
+    /// Keep this. Every other test here reduces the screen to a number, and a
+    /// number cannot show that the rectangle was in the wrong place.
+    ///
+    ///     find ~/Library/Developer/CoreSimulator -name sampled-regions.png
+    @Test("Save a picture of the sampled regions")
+    func saveSampledRegions() async {
+        let size = CGSize(width: 353, height: 220)
+        let view = inkedSurface(.gold, lightOffset: -1)
+
+        let host = UIHostingController(rootView: view)
+        host.safeAreaRegions = []
+        host.view.frame = CGRect(origin: .zero, size: size)
+        let scene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }.first
+        let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+        window.windowScene = scene
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        window.layoutIfNeeded()
+        for _ in 0..<12 { try? await Task.sleep(for: .milliseconds(50)) }
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 2
+        let annotated = UIGraphicsImageRenderer(size: size, format: format).image { ctx in
+            host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+
+            ctx.cgContext.setLineWidth(2)
+            ctx.cgContext.setStrokeColor(UIColor.systemRed.cgColor)
+            ctx.cgContext.stroke(InkPatch.ink)
+            ctx.cgContext.setStrokeColor(UIColor.systemGreen.cgColor)
+            ctx.cgContext.stroke(InkPatch.bare)
+        }
+
+        let url = FileManager.default
+            .urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("sampled-regions.png")
+        try? annotated.pngData()?.write(to: url)
+        #expect(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    @Test("Text stays readable with the light sitting on it")
+    func inkStaysReadableUnderTheLight() async {
+        // Light at the left edge, which is where the ink block is. Anywhere else
+        // the gleam is not crossing the text and the question does not arise.
+        for material in SurfaceMaterial.all {
+            let contrast = await inkContrast(of: inkedSurface(material, lightOffset: -1))
+            #expect(
+                contrast >= Self.minimumInkContrast,
+                "\(material.name) leaves the ink only \(contrast) levels below the surface"
+            )
+        }
+    }
+
+    @Test("The contrast measure reads near zero with no text present")
+    func contrastMeasureHasAFloor() async {
+        // The control for the test above. A measure that always returned a
+        // healthy number would pass that test forever without reading anything.
+        let blank = await inkContrast(of: surface(.gold))
+        #expect(blank < 15, "a surface with no text reported \(blank) levels of contrast")
+    }
+
+    @Test("Paler text reads as less contrast")
+    func palerTextReadsAsLessContrast() async {
+        // The second control, in the other direction: the measure must move when
+        // the ink changes, not only when the light does.
+        let dark = await inkContrast(of: inkedSurface(.gold, lightOffset: 0))
+        let pale = await inkContrast(
+            of: inkedSurface(.gold, lightOffset: 0, inkStyle: .quaternary)
+        )
+
+        #expect(pale < dark, "pale ink \(pale) did not read below dark ink \(dark)")
+    }
 
     @Test("Every material renders the colour it is meant to")
     func materialsMatchTheirReference() async {
