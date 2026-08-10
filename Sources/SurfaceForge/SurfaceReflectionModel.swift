@@ -72,6 +72,15 @@ final class SurfaceReflectionModel {
     static let activationAttack: Float = 0.08
     static let activationRelease: Float = 0.25
 
+    /// Where the deadband calls the device still, as a fraction of
+    /// ``referenceAngularSpeed``. 0.47 and 0.79 degrees a second, both well clear
+    /// of the 0.07 that sensor noise produces.
+    ///
+    /// Two figures rather than one so the gate has hysteresis: a single threshold
+    /// chatters for anyone holding right on it.
+    static let deadbandRelease: Float = 0.015
+    static let deadbandAcquire: Float = 0.025
+
     /// Radians of counter-rotation per radian of deviation from rest.
     ///
     /// Well under the light's own 1.25, so the gleam leads and the surface
@@ -312,9 +321,11 @@ final class SurfaceReflectionModel {
         )
         previousPlanar = planar
 
-        // Cubed, so the gate is a switch rather than a dimmer. A linear stillness
-        // leaves a reference running at 78% through a real gesture, most of the
-        // way to having no gate at all. Cubing collapses that to 5%.
+        // Cubed, so the gate is a switch rather than a dimmer. Through the
+        // gestures the tests drive, a linear stillness leaves a reference running
+        // at about 46% of full rate, which is most of the way to having no gate
+        // at all. Cubing collapses that to 9%. At true rest the term is 1 and the
+        // quick return is untouched.
         let stillness = pow(1 - activation, 3)
 
         relaxLightReference(
@@ -351,11 +362,13 @@ final class SurfaceReflectionModel {
             amount: Self.deviceMotionInfluence * ramp
         )
 
-        diffuseAxis = SurfaceShading.lifted(
-            effective,
-            minimumZ: SurfaceShading.diffuseMinimumZ
+        publish(
+            diffuse: SurfaceShading.lifted(
+                effective,
+                minimumZ: SurfaceShading.diffuseMinimumZ
+            ),
+            key: SurfaceShading.keyDirection(deviceAxis: effective)
         )
-        keyDirection = SurfaceShading.keyDirection(deviceAxis: effective)
 
         // The light and the lean both settle, at very different rates. The lean is
         // an object coming to rest, so it takes under a second. The light is where
@@ -368,6 +381,51 @@ final class SurfaceReflectionModel {
         )
 
         lastSampleTimestamp = sample.timestamp
+    }
+
+    // MARK: Publishing
+
+    /// The smallest change worth redrawing for.
+    ///
+    /// Readings arrive 30 times a second whether or not the device has moved, and
+    /// sensor noise means they are never twice the same. Assigning every one of
+    /// them keeps SwiftUI re-evaluating, which holds the display at its full
+    /// refresh rate and stops it idling down. A surface sitting still on screen
+    /// should cost nothing.
+    ///
+    /// Between sensor noise below and the eye above, and the gap is narrower than
+    /// it looks. A still device wanders about 1e-4 radians; past 0.002 a step
+    /// starts to show as the band jumps. Do not leave that range.
+    private static let directionEpsilon: Float = 0.001
+    private static let angleEpsilon: Double = 0.0005
+
+    /// Assigns the two light directions only if either has moved perceptibly.
+    ///
+    /// Both together, because they are read in the same draw and letting one
+    /// through alone would redraw for the pair anyway.
+    private func publish(diffuse: SIMD3<Float>, key: SIMD3<Float>) {
+        let moved = simd_distance(diffuse, diffuseAxis) > Self.directionEpsilon
+            || simd_distance(key, keyDirection) > Self.directionEpsilon
+
+        guard moved else { return }
+
+        diffuseAxis = diffuse
+        keyDirection = key
+    }
+
+    /// Assigns the lean only if it has moved perceptibly.
+    ///
+    /// Angle and axis together, as one vector. Swivel the wrist at a constant tip
+    /// and the angle never changes while the axis sweeps right round, so gating
+    /// on the angle alone would hold a stale axis and lean the surface the wrong
+    /// way.
+    private func publish(tiltAngle angle: Double, axis: SIMD2<Double>) {
+        let candidate = axis * angle
+        let published = tiltAxis * tiltAngle
+        guard simd_distance(candidate, published) > Self.angleEpsilon else { return }
+
+        tiltAngle = angle
+        tiltAxis = axis
     }
 
     // MARK: Where the light comes home to
@@ -399,11 +457,20 @@ final class SurfaceReflectionModel {
         let current = restingOrientation ?? neutralOrientation ?? orientation
         let amount = (1 - exp(-deltaTime / Self.lightReturnTimeConstant)) * stillness
 
-        restingOrientation = simd_slerp(
-            simd_normalize(current),
-            simd_normalize(orientation),
-            amount
-        )
+        let target = simd_normalize(orientation)
+        let blended = simd_slerp(simd_normalize(current), target, amount)
+
+        // Ends the return rather than letting it asymptote. What pinning costs is
+        // motion slower than 0.034 degrees a second, which the reference now
+        // absorbs instead of reporting.
+        //
+        // Aligned first, because `simd_slerp` takes the short arc and converges
+        // on the negated quaternion past a half turn. Comparing against the
+        // un-negated target there pins at 2.0 and never fires. The sign is
+        // invisible downstream, since this is only read through `.inverse`.
+        let aligned = simd_dot(blended.vector, target.vector) < 0 ? -target : target
+        let remaining = simd_length(blended.vector - aligned.vector)
+        restingOrientation = remaining < 1e-5 ? aligned : blended
     }
 
     // MARK: The surface's own tilt
@@ -456,7 +523,7 @@ final class SurfaceReflectionModel {
         // (0, 0, 0) rather than letting it spring flat about the axis it had. At
         // angle 0 a stale axis is the identity transform and costs nothing.
         guard magnitude > 1e-6 else {
-            tiltAngle = 0
+            publish(tiltAngle: 0, axis: tiltAxis)
             return
         }
 
@@ -464,7 +531,7 @@ final class SurfaceReflectionModel {
         let ceiling = Self.tiltCeiling(reduceMotion: reduceMotion)
 
         guard ceiling > 1e-6 else {
-            tiltAngle = 0
+            publish(tiltAngle: 0, axis: tiltAxis)
             return
         }
 
@@ -473,14 +540,15 @@ final class SurfaceReflectionModel {
         // ceiling with no corner. A hard clamp puts a visible kink in the motion
         // the instant the wrist crosses the saturation angle: the surface stops
         // dead mid-gesture.
-        tiltAngle = Double(ceiling * tanh(magnitude * gain / ceiling))
-
         // Core Motion's device frame is +x right, +y toward the top of the
         // screen, +z out of the glass. `rotation3DEffect`'s axis is +x right, +y
         // down, +z out. Only y flips.
-        tiltAxis = SIMD2<Double>(
-            Double(deviation.x / magnitude),
-            Double(-deviation.y / magnitude)
+        publish(
+            tiltAngle: Double(ceiling * tanh(magnitude * gain / ceiling)),
+            axis: SIMD2<Double>(
+                Double(deviation.x / magnitude),
+                Double(-deviation.y / magnitude)
+            )
         )
     }
 
@@ -495,9 +563,9 @@ final class SurfaceReflectionModel {
         // without this the reference would sit permanently half frozen on a
         // device lying untouched on a desk, which is exactly the case the whole
         // mechanism exists to serve.
-        if activation <= 0.015, target < 0.025 {
-            target = 0
-        } else if target < 0.015 {
+        let releasing = target < Self.deadbandRelease
+        let acquiring = activation <= Self.deadbandRelease && target < Self.deadbandAcquire
+        if releasing || acquiring {
             target = 0
         }
 
@@ -534,8 +602,10 @@ final class SurfaceReflectionModel {
         let a = SurfaceShading.normalized(start, fallback: SurfaceShading.canonicalAxis)
         let b = SurfaceShading.normalized(end, fallback: SurfaceShading.canonicalAxis)
 
-        // Nearly antipodal axes have no well-defined interpolation. Bail to the
-        // rest direction rather than spinning through an arbitrary one.
+        // A behaviour choice, not a numerical guard: degeneracy only starts within
+        // 2e-4 radians of exactly opposite. A light pointing nearly backwards is
+        // not worth interpolating toward, so the surface goes to rest instead of
+        // swinging through an arbitrary path.
         guard simd_dot(a, b) > -0.95 else { return SurfaceShading.canonicalAxis }
 
         return SurfaceShading.normalized(
