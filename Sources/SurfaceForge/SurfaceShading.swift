@@ -121,7 +121,12 @@ nonisolated enum SurfaceShading {
             return neutralKeyDirection
         }
 
-        let angle = acos(min(max(simd_dot(canonicalAxis, axis), -1), 1))
+        // `atan2`, not `acos` of the dot alone. Near the neutral hold the dot sits
+        // at about 1, where `acos` has almost no resolution: one Float step
+        // becomes 3.5e-4 radians, coarse enough that a still surface jumps past
+        // the model's publish threshold on noise and keeps redrawing.
+        // `rotationAxisLength` is already sin(angle), so this is free.
+        let angle = atan2(rotationAxisLength, simd_dot(canonicalAxis, axis))
         let rotation = simd_quatf(
             angle: angle * keyReflectionTiltGain,
             axis: rotationAxis / rotationAxisLength
