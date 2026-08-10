@@ -46,17 +46,15 @@ final class SurfaceReflectionModel {
 
     /// How quickly the light finds its way home, once the device is still.
     ///
-    /// More than ten times the surface's own settle, and the gap is the point. A
-    /// reflection that forgets where the light is stops being a reflection, so
-    /// this must never fire during use. But with no return at all, holding the
-    /// phone at an angle leaves a surface that looks flat while its highlight says
-    /// it is tilted, and the resting look the design chose is only ever seen on
-    /// first launch.
+    /// The surface settles in about a second and the light lands a few seconds
+    /// after, so the two read as a sequence: the object comes to rest, then the
+    /// light catches up.
     ///
-    /// At 4 s the light is most of the way home after about twelve seconds of
-    /// stillness: unhurried enough to read as the light settling rather than as
-    /// the material resetting.
-    static let lightReturnTimeConstant: Float = 4.0
+    /// The floor is what a slow gesture costs. Turn the phone gradually enough
+    /// and the return runs while you are still turning, absorbing the movement it
+    /// exists to report. At 1.2 a two-degree-a-second turn loses a fifth of
+    /// itself; at 2.0 it survives.
+    static let lightReturnTimeConstant: Float = 2.0
 
     /// Angular speed, in radians per second, that counts as fully moving.
     ///
