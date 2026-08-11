@@ -137,6 +137,54 @@ private func highlightFalloff<V: View>(of view: V) async -> Int {
     return Int(high - low)
 }
 
+/// How far the bright band spreads across the surface and up it, in pixels.
+///
+/// Weighted by how far each pixel sits above the surface's own mean, so the band
+/// is measured and the dim surround is not. A round highlight spreads about
+/// equally both ways; a stretched one spreads further along the axis it stretches.
+@MainActor
+private func highlightSpread<V: View>(of view: V) async -> (across: Double, up: Double) {
+    let raw = await rawPixels(of: view, size: CGSize(width: 353, height: 220))
+    guard !raw.pixels.isEmpty else { return (0, 0) }
+
+    var luma = [Double](repeating: 0, count: raw.width * raw.height)
+    for i in 0..<(raw.width * raw.height) {
+        let p = i * 4
+        luma[i] = luminance(
+            (Int(raw.pixels[p]), Int(raw.pixels[p + 1]), Int(raw.pixels[p + 2]))
+        )
+    }
+
+    let mean = luma.reduce(0, +) / Double(luma.count)
+    // Only what is brighter than average carries the band. Squared, so the core
+    // counts for more than the shoulder and the measure follows the peak rather
+    // than the threshold.
+    var weightSum = 0.0, cx = 0.0, cy = 0.0
+    for y in 0..<raw.height {
+        for x in 0..<raw.width {
+            let w = max(luma[y * raw.width + x] - mean, 0)
+            let w2 = w * w
+            weightSum += w2
+            cx += w2 * Double(x)
+            cy += w2 * Double(y)
+        }
+    }
+    guard weightSum > 0 else { return (0, 0) }
+    cx /= weightSum
+    cy /= weightSum
+
+    var vx = 0.0, vy = 0.0
+    for y in 0..<raw.height {
+        for x in 0..<raw.width {
+            let w = max(luma[y * raw.width + x] - mean, 0)
+            let w2 = w * w
+            vx += w2 * (Double(x) - cx) * (Double(x) - cx)
+            vy += w2 * (Double(y) - cy) * (Double(y) - cy)
+        }
+    }
+    return ((vx / weightSum).squareRoot(), (vy / weightSum).squareRoot())
+}
+
 /// Rec. 601 luma, the same weighting the shader applies to content.
 private func luminance(_ c: (r: Int, g: Int, b: Int)) -> Double {
     let r = Double(c.r) * 0.299
@@ -147,11 +195,33 @@ private func luminance(_ c: (r: Int, g: Int, b: Int)) -> Double {
 
 /// A bare surface with no content, so nothing but the material is under test.
 @MainActor
-private func surface(_ material: SurfaceMaterial, gleam: Double = 1) -> some View {
+private func surface(
+    _ material: SurfaceMaterial,
+    gleam: Double = 1,
+    roll: Double = 14
+) -> some View {
     Surface(material: material) { Color.clear }
         .frame(width: 353, height: 220)
         .surfaceGleam(gleam)
-        .surfaceTiltSource(.fixed(pitch: -8, roll: 14))
+        .surfaceTiltSource(.fixed(pitch: -8, roll: roll))
+}
+
+/// Every pixel, not the middle band.
+///
+/// The band is where the gleam sits, which is the right window for reading a
+/// material's colour. The grain rides the window lobe, which covers the whole
+/// surface, so a test that only reads the middle third can miss it entirely.
+@MainActor
+private func wholePlate<V: View>(of view: V) async -> [(r: Int, g: Int, b: Int)] {
+    let raw = await rawPixels(of: view, size: CGSize(width: 353, height: 220))
+    guard !raw.pixels.isEmpty else { return [] }
+
+    var pixels: [(r: Int, g: Int, b: Int)] = []
+    pixels.reserveCapacity(raw.width * raw.height)
+    for i in stride(from: 0, to: raw.width * raw.height * 4, by: 4) {
+        pixels.append((Int(raw.pixels[i]), Int(raw.pixels[i + 1]), Int(raw.pixels[i + 2])))
+    }
+    return pixels
 }
 
 // MARK: - Legibility
@@ -364,6 +434,30 @@ struct SurfaceRenderTests {
         }
     }
 
+    @Test("Text stays readable on a brushed surface too")
+    func inkStaysReadableWhenBrushed() async {
+        // Brushing reshapes the gleam that crosses the text, so the legibility
+        // floor has to be met again rather than inherited. Both grains, because
+        // one stands the band up across the text and the other lays it along.
+        //
+        // Same worst case as the polished test: the light at the left edge, which
+        // is where the ink block is.
+        for material in SurfaceMaterial.all {
+            for degrees in [0.0, 90.0] {
+                let brushed = material.brushed(1, angle: .degrees(degrees))
+                let contrast = await inkContrast(of: inkedSurface(brushed, lightOffset: -1))
+
+                #expect(
+                    contrast >= Self.minimumInkContrast,
+                    """
+                    \(material.name) brushed at \(Int(degrees))° leaves the ink only \
+                    \(contrast) levels below the surface
+                    """
+                )
+            }
+        }
+    }
+
     @Test("The contrast measure reads near zero with no text present")
     func contrastMeasureHasAFloor() async {
         // The control for the test above. A measure that always returned a
@@ -403,6 +497,137 @@ struct SurfaceRenderTests {
             #expect(
                 drift <= tolerance,
                 "\(material.name) moved to \(got.r),\(got.g),\(got.b) from \(want.r),\(want.g),\(want.b)"
+            )
+        }
+    }
+
+    // MARK: - Brushing
+
+    @Test("Brushing at zero renders exactly what polished renders")
+    func zeroBrushingIsExactlyPolished() async {
+        // The guarantee the whole brushing change rests on, asked of the GPU
+        // instead of argued on paper. Every material is pinned to a reference
+        // colour, so an exponent that drifts by one float quietly recolours
+        // every surface already shipped.
+        //
+        // The grain angle is what makes this a real comparison. A material and
+        // its own `brushed(0)` carry identical uniforms, so rendering both would
+        // only prove the GPU is deterministic: no change to the exponent could
+        // ever fail it, because it would move both sides equally. Aiming the
+        // grain elsewhere holds the amount at zero while changing what the
+        // shader is handed, so the renders can only match if zero amount
+        // genuinely discards the grain.
+        //
+        // The hostile angles are the test rather than decoration. Zero brushing is
+        // exact because `mix(1, stretch, 0)` returns an exact 1.0, which is true
+        // for a finite stretch and false for a NaN one, and only a non-finite
+        // angle or amount can produce one. Those two cases are the whole failure
+        // mode the guarantee has.
+        //
+        // Byte-identical, not within a tolerance. Both renders happen on this
+        // machine in this run from the same fixed pose, so anything other than
+        // equality is the brushed path's own arithmetic.
+        let poses: [(label: String, roll: Double, gleam: Double)] = [
+            ("rest", 0, 1), ("tilted", 14, 1), ("fading", 14, 0.45),
+        ]
+        let angles: [Angle] = [
+            .degrees(37), .degrees(116), .degrees(249.5),
+            .degrees(.nan), .degrees(.infinity), .degrees(1e300),
+        ]
+
+        for material in SurfaceMaterial.all {
+            for pose in poses {
+                let polished = await wholePlate(
+                    of: surface(material, gleam: pose.gleam, roll: pose.roll)
+                )
+                #expect(!polished.isEmpty, "\(material.name) rendered nothing")
+
+                for angle in angles {
+                    let unbrushed = await wholePlate(
+                        of: surface(
+                            material.brushed(0, angle: angle),
+                            gleam: pose.gleam,
+                            roll: pose.roll
+                        )
+                    )
+                    let differing = zip(polished, unbrushed).filter { $0.0 != $0.1 }.count
+                    #expect(
+                        differing == 0,
+                        """
+                        \(material.name) at \(pose.label), grain \(angle.degrees)°: \
+                        zero brushing moved \(differing) of \(polished.count) pixels
+                        """
+                    )
+                }
+
+                // The other half of the same guarantee.
+                let nanAmount = await wholePlate(
+                    of: surface(material.brushed(.nan), gleam: pose.gleam, roll: pose.roll)
+                )
+                #expect(
+                    zip(polished, nanAmount).filter { $0.0 != $0.1 }.count == 0,
+                    "\(material.name) at \(pose.label): a NaN amount is not polished"
+                )
+            }
+        }
+    }
+
+    @Test("Brushing at full strength does reach the surface")
+    func fullBrushingReachesTheSurface() async {
+        // The control for the test above, which would pass just as happily if the
+        // grain never reached the shader at all.
+        //
+        // A quarter of the plate, not a thousand pixels. Through the sheen alone
+        // this was 3108 to 5844 pixels and never more than 2 levels; with the
+        // window brushed too it is about half of them and up to 12 levels. A bar
+        // the sheen can clear on its own cannot tell that the window has come
+        // loose, which is the failure worth catching.
+        for material in SurfaceMaterial.all {
+            let polished = await wholePlate(of: surface(material))
+            let brushed = await wholePlate(of: surface(material.brushed(1)))
+
+            let differing = zip(polished, brushed).filter { $0.0 != $0.1 }.count
+            #expect(
+                differing > polished.count / 4,
+                "\(material.name): full brushing moved only \(differing) of \(polished.count) pixels"
+            )
+        }
+    }
+
+    @Test("The highlight stretches across the grain, not along it")
+    func brushingStretchesAcrossTheGrain() async {
+        // What brushing is for. Every other brushing test here says it does no
+        // harm; this one says it does the thing.
+        //
+        // A groove scatters light across itself, so a brush running left to right
+        // gives a highlight standing up, and one running top to bottom gives a
+        // highlight lying flat. Compares the two grains against each other rather
+        // than against pinned numbers, because the surface's own bow already
+        // biases the band toward the vertical and that bias is not what is under
+        // test.
+        //
+        // Measured, up over across: the bow alone gives 1.36 to 1.46, brushing
+        // left to right takes it to 1.83 to 2.16, and brushing top to bottom flips
+        // it to 0.58 to 0.61. About a 3.6-fold swing in aspect between the two
+        // grains.
+        for material in SurfaceMaterial.all {
+            let horizontalBrush = await highlightSpread(
+                of: surface(material.brushed(1, angle: .zero))
+            )
+            let verticalBrush = await highlightSpread(
+                of: surface(material.brushed(1, angle: .degrees(90)))
+            )
+
+            let standing = horizontalBrush.up / max(horizontalBrush.across, 0.001)
+            let lying = verticalBrush.up / max(verticalBrush.across, 0.001)
+
+            #expect(
+                standing > lying * 1.2,
+                """
+                \(material.name): brushing left-to-right gave an up/across ratio of \
+                \(standing), brushing top-to-bottom gave \(lying). The grain is not \
+                turning the highlight.
+                """
             )
         }
     }

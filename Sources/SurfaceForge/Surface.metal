@@ -126,6 +126,65 @@ constant float3 kCockleWeight     = float3( 0.44,  0.34,  0.22);   // sums to 1
 // travels, not enough to read as a texture.
 constant float kCockleAmplitude = 0.0020;
 
+// MARK: - Brushing
+
+// A brushed metal is a field of parallel grooves. A groove scatters light across
+// itself and not along itself, so the highlight spreads one way and stays tight
+// the other. That stretch is most of what separates brushed from polished, and it
+// is one direction-dependent exponent rather than a second lobe.
+
+// How far the exponent moves at full brushing. A half-width goes as the square
+// root of the exponent, so 3 makes the band sqrt(3) wider one way and sqrt(3)
+// tighter the other: a 3:1 highlight. Past about 4 it stops reading as one
+// highlight and starts reading as two.
+constant float kBrushedRatio = 3.0;
+
+// Keeps the weighting finite where the half vector meets the normal exactly. At
+// the highlight's own peak both projections vanish and a plain ratio is 0/0.
+// Added to both sides, so that case resolves to 1, which is isotropic, and a peak
+// carries no direction to be anisotropic about. It only outweighs a real
+// projection below 1e-6 of deviation, a ten-thousandth of a degree.
+constant float kBrushedFloor = 1.0e-12;
+
+/// How far the grain stretches a lobe, as a multiplier on its exponent.
+///
+/// `brushing` is (amount, cos, sin) of the axis the highlight stretches along,
+/// solved on the CPU so no fragment pays for a sincos of a value that is uniform
+/// across the surface. It reads no light direction, so it survives being solved
+/// before the gleam and the light offset are.
+///
+/// Measured from the half vector's deviation from the normal, not from the half
+/// vector itself. At a lobe's peak H is N, and the bow leans N by up to 3.4
+/// degrees, so the raw projection reads that lean as grain: a 45-degree grain
+/// renders at 60, and the streak's aspect falls from 3.0 to 2.2.
+///
+/// Divided by the projections' own sum rather than by `1 - dot(N, H)^2`. That
+/// denominator is the deviation's full length while this pair measures only its
+/// surface-plane part, so the sum is what makes the ratio a squared cosine of the
+/// azimuth. It also makes the result a weighted mean of the two exponents, so it
+/// stays between them whatever the normal does.
+///
+/// `mix` is what keeps a polished metal exactly where it was. It is
+/// `a + 0 * (b - a)` at zero, so each lobe gets its own exponent times an exact
+/// 1.0 and every surface already shipped renders the pixel it rendered before.
+/// That holds for a finite `stretch` and only for a finite one, which is why
+/// ``SurfaceMaterial/brushed(_:angle:)`` will not pass a NaN through. A branch
+/// would buy the same guarantee, and nothing else in this file branches on a
+/// uniform.
+inline float grainStretch(float3 H, float3 N, float NdotH, float3 brushing) {
+    float2 planar = H.xy - N.xy * NdotH;
+    float2 grain  = brushing.yz;
+    float along   = dot(planar, grain);
+    float across  = planar.x * -grain.y + planar.y * grain.x;
+    along  *= along;
+    across *= across;
+
+    float stretch = (along / kBrushedRatio + across * kBrushedRatio + kBrushedFloor)
+                  / (along + across + kBrushedFloor);
+
+    return mix(1.0, stretch, brushing.x);
+}
+
 // MARK: - Colour space
 
 // Verified, not assumed. surfaceGreyProbe returning half4(0.5) renders to exactly
@@ -256,7 +315,10 @@ inline float3 surfaceNormal(float2 p) {
                           // nothing below reads either direction, which is what
                           // lets the light be re-placed with nothing moving.
     float3 metalTint,     // which metal
-    float windowExponent  // how tight this metal's travelling band is
+    float windowExponent, // how tight this metal's travelling band is
+    float3 brushing       // (amount, cos, sin) of the grain. Zero amount is
+                          // polished, and renders exactly what polished rendered
+                          // before this argument existed
 ) {
     using namespace SurfaceForge;
 
@@ -295,7 +357,13 @@ inline float3 surfaceNormal(float2 p) {
     float3 H     = normalize(keyDirection + V);
     float  NdotH = max(dot(N, H), 0.0);
 
-    float highlightAmount = pow(NdotH, kSpecularPower) * kSpecularStrength;
+    // One grain drives both lobes: this sheen and the coat's window below. The
+    // coat is thin and conformal, so a grooved leaf gives it a grooved outer face
+    // too. Brushing the sheen alone moves the surface by 2 levels, measured; the
+    // window carries the other 10.
+    float stretch = grainStretch(H, N, NdotH, brushing);
+
+    float highlightAmount = pow(NdotH, kSpecularPower * stretch) * kSpecularStrength;
 
     float3 R = reflect(-V, N);
     // The window rides the same direction as the key light, so the broad
@@ -310,7 +378,8 @@ inline float3 surfaceNormal(float2 p) {
     // park the light at zero gleam with nothing moving on screen. Gating the
     // whole coat instead would also take the sky, and the surface would go
     // visibly flatter.
-    float windowCoupling      = pow(saturate(dot(R, keyDirection)), windowExponent)
+    float windowCoupling      = pow(saturate(dot(R, keyDirection)),
+                                    windowExponent * stretch)
                               * gleamAmount;
     float environmentRadiance = sampleAnalyticEnvironment(R, windowCoupling);
 

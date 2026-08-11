@@ -27,6 +27,16 @@ extension View {
         let tightness = material.highlightTightness
         let offset = min(max(lightOffset, -1), 1)
 
+        // Perpendicular to the brush stroke, because a groove scatters light
+        // across itself: hair gives a band across the strands, a record streaks
+        // radially. Resolved here so no fragment pays for a sincos of one value
+        // that is the same everywhere.
+        let brushing = SIMD3<Float>(
+            material.highlightStretch,
+            -sin(material.grainAngle),
+            cos(material.grainAngle)
+        )
+
         return visualEffect { view, proxy in
             // Solved here rather than per fragment. The eye is a function of the
             // surface's proportion alone, so the shader would be recomputing one
@@ -68,7 +78,8 @@ extension View {
                     .float3(diffuse.x, diffuse.y, diffuse.z),
                     .float(amount),
                     .float3(tint.x, tint.y, tint.z),
-                    .float(tightness)
+                    .float(tightness),
+                    .float3(brushing.x, brushing.y, brushing.z)
                 )
             )
         }
