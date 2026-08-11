@@ -29,16 +29,39 @@ public struct SurfaceMaterial: Sendable, Hashable {
     /// narrowing, so the useful range runs downward from there.
     let highlightTightness: Float
 
+    /// How far the highlight stretches across the grain.
+    ///
+    /// `0` is polished: the highlight stays round. `1` makes it three times longer
+    /// than it is wide. A brushed metal is a field of parallel grooves, and a
+    /// groove scatters light across itself but not along itself, so the highlight
+    /// spreads one way and stays tight the other. Measured across the surface, `1`
+    /// takes gold's band from 8.1 degrees each way to 13.8 by 4.7.
+    ///
+    /// Zero is not an approximation of polished. It renders the pixel a polished
+    /// material rendered before this existed.
+    let highlightStretch: Float
+
+    /// Which way the brush ran, in radians from the surface's long axis.
+    ///
+    /// The highlight stretches across this rather than along it, because that is
+    /// what a groove does to light. Only read when ``highlightStretch`` is above
+    /// zero.
+    let grainAngle: Float
+
     /// What the material is called when something has to say.
     public let name: String
 
     init(
         tint: SIMD3<Float>,
         highlightTightness: Float = 60,
+        highlightStretch: Float = 0,
+        grainAngle: Float = 0,
         name: String
     ) {
         self.tint = tint
         self.highlightTightness = highlightTightness
+        self.highlightStretch = highlightStretch
+        self.grainAngle = grainAngle
         self.name = name
     }
 
@@ -93,6 +116,41 @@ public struct SurfaceMaterial: Sendable, Hashable {
         highlightTightness: 18,
         name: "Gunmetal"
     )
+
+    // MARK: - Brushing
+
+    /// The same metal, brushed.
+    ///
+    /// The highlight stretches into a band across the grain instead of staying
+    /// round, which is most of what separates brushed metal from polished.
+    ///
+    /// `angle` is the direction the brush ran, from the surface's long axis:
+    /// `.zero` brushes left to right, `.degrees(90)` top to bottom. `amount` runs
+    /// from `0` for polished to `1` for fully brushed.
+    ///
+    /// A diagonal grain reads a little weaker than an axis-aligned one, because
+    /// the surface's own bow already biases the highlight toward the vertical.
+    public func brushed(_ amount: Double = 1, angle: Angle = .zero) -> SurfaceMaterial {
+        // Sanitized here rather than in the shader. The polished guarantee is that
+        // `mix(1, stretch, 0)` returns an exact 1.0, which holds for a finite
+        // stretch and only for a finite one, so one NaN arriving through either
+        // parameter would take it away.
+        //
+        // `remainder` rather than a clamp, because a grain is an axis and any
+        // whole turn of it is the same grain.
+        let clamped = amount.isFinite ? min(max(amount, 0), 1) : 0
+        let radians = angle.radians.isFinite
+            ? angle.radians.remainder(dividingBy: 2 * .pi)
+            : 0
+
+        return SurfaceMaterial(
+            tint: tint,
+            highlightTightness: highlightTightness,
+            highlightStretch: Float(clamped),
+            grainAngle: Float(radians),
+            name: name
+        )
+    }
 
     /// A metal of your own.
     ///
