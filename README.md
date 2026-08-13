@@ -161,6 +161,27 @@ knob. It runs on a Simulator with no Apple account and no signing setup.
 
 </details>
 
+## Finish
+
+The same metal, worked differently:
+
+```swift
+Surface(material: .gold.finish(.brushed)) { … }
+```
+
+Ten finishes ship: polished (the default), brushed, pinstripe, carbon twill,
+topographic, basketweave, clous de Paris, knurling, sandblasted and sunburst.
+Brushed and pinstripe take a direction:
+
+```swift
+.gold.finish(.brushed(angle: .degrees(90)))
+```
+
+`SurfaceFinish.all` lists them for pickers, `hasDirection` says whether an
+angle means anything, and `aimed(at:)` applies one where it does. A finish
+never changes the metal itself: same tint, same highlight character, and
+text on the surface stays legible under every pattern.
+
 ## Requirements
 
 iOS 17. No dependencies. No bundled assets.
