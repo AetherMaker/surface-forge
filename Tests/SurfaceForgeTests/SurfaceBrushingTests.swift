@@ -14,23 +14,14 @@ struct SurfaceBrushingTests {
         //
         // Cheap on purpose. The render test proves the same thing on a GPU and
         // takes a simulator and two minutes; this fails in a second.
-        for amount in [Double.nan, .infinity, -.infinity, -5, 0.5, 7] {
-            for degrees in [Double.nan, .infinity, -.infinity, 1e300, -1e300, 37] {
-                let material = SurfaceMaterial.gold.brushed(amount, angle: .degrees(degrees))
+        for degrees in [Double.nan, .infinity, -.infinity, 1e300, -1e300, 37] {
+            let material = SurfaceMaterial.gold.finish(.brushed(angle: .degrees(degrees)))
 
-                #expect(
-                    material.highlightStretch.isFinite,
-                    "amount \(amount) produced \(material.highlightStretch)"
-                )
-                #expect(
-                    (0...1).contains(material.highlightStretch),
-                    "amount \(amount) left the range at \(material.highlightStretch)"
-                )
-                #expect(
-                    material.grainAngle.isFinite,
-                    "angle \(degrees)° produced \(material.grainAngle)"
-                )
-            }
+            #expect(material.highlightStretch == 1, "brushed is not fully brushed")
+            #expect(
+                material.grainAngle.isFinite,
+                "angle \(degrees)° produced \(material.grainAngle)"
+            )
         }
     }
 
@@ -38,29 +29,13 @@ struct SurfaceBrushingTests {
     func grainWrapsRatherThanClamps() {
         // An axis, not a heading. Clamping would have pinned every angle past one
         // turn to the same edge value and quietly killed the grain there.
-        let base = SurfaceMaterial.gold.brushed(1, angle: .degrees(30))
-        let turned = SurfaceMaterial.gold.brushed(1, angle: .degrees(390))
+        let base = SurfaceMaterial.gold.finish(.brushed(angle: .degrees(30)))
+        let turned = SurfaceMaterial.gold.finish(.brushed(angle: .degrees(390)))
 
         #expect(
             abs(base.grainAngle - turned.grainAngle) < 1e-5,
             "30° gave \(base.grainAngle) and 390° gave \(turned.grainAngle)"
         )
-    }
-
-    @Test("Brushing leaves everything else about the material alone")
-    func brushingPreservesTheMetal() {
-        // It is the same metal, worked differently. A tint or tightness that moved
-        // here would recolour the material and break its reference pixels.
-        for material in SurfaceMaterial.all {
-            let brushed = material.brushed(1, angle: .degrees(45))
-
-            #expect(brushed.tint == material.tint, "\(material.name) changed tint")
-            #expect(
-                brushed.highlightTightness == material.highlightTightness,
-                "\(material.name) changed tightness"
-            )
-            #expect(brushed.name == material.name, "\(material.name) changed name")
-        }
     }
 
     @Test("Brushing at zero is the polished material exactly")
@@ -69,8 +44,8 @@ struct SurfaceBrushingTests {
         // shader's `mix` has nothing to discard and the guarantee is gone before
         // the GPU sees it.
         for material in SurfaceMaterial.all {
-            #expect(SurfaceMaterial.gold.brushed(0).highlightStretch == 0)
-            #expect(material.brushed(0, angle: .degrees(37)).highlightStretch == 0)
+            #expect(SurfaceMaterial.gold.finish(.polished).highlightStretch == 0)
+            #expect(material.finish(.polished).highlightStretch == 0)
         }
     }
 }
