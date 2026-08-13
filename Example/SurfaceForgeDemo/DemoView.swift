@@ -14,19 +14,17 @@ struct DemoView: View {
     @State private var pitch = -8.0
     @State private var roll = 14.0
     @State private var cornerRadius = 22.0
-    @State private var brushing = 0.0
+    @State private var finish = SurfaceFinish.polished
     @State private var grainAngle = 0.0
 
     private var tiltSource: SurfaceTiltSource {
         usesDeviceMotion ? .deviceMotion : .fixed(pitch: pitch, roll: roll)
     }
 
-    /// The picked metal with the brushing controls applied.
-    ///
-    /// At zero brushing this is the polished metal itself, so the sliders cannot
-    /// perturb what the six materials look like by default.
+    /// The picked finish with the angle slider applied, where an angle means
+    /// something. The slider is only shown when it does.
     private var finished: SurfaceMaterial {
-        brushing == 0 ? material : material.brushed(brushing, angle: .degrees(grainAngle))
+        material.finish(finish.aimed(at: .degrees(grainAngle)))
     }
 
     var body: some View {
@@ -72,16 +70,16 @@ struct DemoView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 materialPicker
+                finishPicker
+
+                if finish.hasDirection {
+                    slider("Grain angle", value: $grainAngle, in: 0...180, unit: "°")
+                }
 
                 slider("Light offset", value: $lightOffset, in: -1...1)
                 slider("Gleam", value: $gleam, in: 0...1)
                 slider("Corner radius", value: $cornerRadius, in: 0...60, unit: "pt")
 
-                slider("Brushing", value: $brushing, in: 0...1)
-                // Only worth a slider while there is brushing to aim.
-                if brushing > 0 {
-                    slider("Grain angle", value: $grainAngle, in: 0...180, unit: "°")
-                }
 
                 Toggle("Follow the device", isOn: $usesDeviceMotion)
                     .font(.system(size: 13, weight: .medium))
@@ -116,6 +114,31 @@ struct DemoView: View {
                     .buttonStyle(.plain)
                 }
             }
+        }
+    }
+
+    private var finishPicker: some View {
+        // Scrolls for the same reason the material picker does: the roster is
+        // wider than any phone.
+        ScrollView(.horizontal, showsIndicators: false) {
+        HStack(spacing: 8) {
+            ForEach(SurfaceFinish.all, id: \.name) { candidate in
+                Button {
+                    withAnimation(.snappy) { finish = candidate }
+                } label: {
+                    Text(candidate.name)
+                        .font(.system(size: 12, weight: .medium))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule().fill(
+                                .white.opacity(candidate == finish ? 0.22 : 0.08)
+                            )
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
         }
     }
 
