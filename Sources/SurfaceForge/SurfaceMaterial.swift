@@ -29,39 +29,33 @@ public struct SurfaceMaterial: Sendable, Hashable {
     /// narrowing, so the useful range runs downward from there.
     let highlightTightness: Float
 
-    /// How far the highlight stretches across the grain.
+    /// How the surface is worked. Polished unless ``finish(_:)`` said otherwise.
     ///
-    /// `0` is polished: the highlight stays round. `1` makes it three times longer
-    /// than it is wide. A brushed metal is a field of parallel grooves, and a
-    /// groove scatters light across itself but not along itself, so the highlight
-    /// spreads one way and stays tight the other. Measured across the surface, `1`
-    /// takes gold's band from 8.1 degrees each way to 13.8 by 4.7.
-    ///
-    /// Zero is not an approximation of polished. It renders the pixel a polished
-    /// material rendered before this existed.
-    let highlightStretch: Float
-
-    /// Which way the brush ran, in radians from the surface's long axis.
-    ///
-    /// The highlight stretches across this rather than along it, because that is
-    /// what a groove does to light. Only read when ``highlightStretch`` is above
-    /// zero.
-    let grainAngle: Float
+    /// Polished is not an approximation of no finish. It renders the pixel the
+    /// material rendered before finishes existed.
+    let surfaceFinish: SurfaceFinish
 
     /// What the material is called when something has to say.
     public let name: String
 
+    /// How far the highlight stretches: `0` is polished and round, `1`
+    /// stretches it along the grain axis to about 1.7 times its polished
+    /// length. It only ever spreads, so the band keeps the material's own
+    /// width against the grain.
+    var highlightStretch: Float { surfaceFinish.stretch }
+
+    /// Which way the brush ran, in radians from the surface's long axis.
+    var grainAngle: Float { surfaceFinish.grainAngle }
+
     init(
         tint: SIMD3<Float>,
         highlightTightness: Float = 60,
-        highlightStretch: Float = 0,
-        grainAngle: Float = 0,
+        finish: SurfaceFinish = .polished,
         name: String
     ) {
         self.tint = tint
         self.highlightTightness = highlightTightness
-        self.highlightStretch = highlightStretch
-        self.grainAngle = grainAngle
+        self.surfaceFinish = finish
         self.name = name
     }
 
@@ -117,37 +111,18 @@ public struct SurfaceMaterial: Sendable, Hashable {
         name: "Gunmetal"
     )
 
-    // MARK: - Brushing
+    // MARK: - Finish
 
-    /// The same metal, brushed.
+    /// The same metal, worked differently.
     ///
-    /// The highlight stretches into a band across the grain instead of staying
-    /// round, which is most of what separates brushed metal from polished.
-    ///
-    /// `angle` is the direction the brush ran, from the surface's long axis:
-    /// `.zero` brushes left to right, `.degrees(90)` top to bottom. `amount` runs
-    /// from `0` for polished to `1` for fully brushed.
-    ///
-    /// A diagonal grain reads a little weaker than an axis-aligned one, because
-    /// the surface's own bow already biases the highlight toward the vertical.
-    public func brushed(_ amount: Double = 1, angle: Angle = .zero) -> SurfaceMaterial {
-        // Sanitized here rather than in the shader. The polished guarantee is that
-        // `mix(1, stretch, 0)` returns an exact 1.0, which holds for a finite
-        // stretch and only for a finite one, so one NaN arriving through either
-        // parameter would take it away.
-        //
-        // `remainder` rather than a clamp, because a grain is an axis and any
-        // whole turn of it is the same grain.
-        let clamped = amount.isFinite ? min(max(amount, 0), 1) : 0
-        let radians = angle.radians.isFinite
-            ? angle.radians.remainder(dividingBy: 2 * .pi)
-            : 0
-
-        return SurfaceMaterial(
+    /// Everything else about the material is unchanged: a brushed gold is the same
+    /// gold. ``SurfaceFinish/polished`` renders exactly what the material rendered
+    /// before finishes existed.
+    public func finish(_ finish: SurfaceFinish) -> SurfaceMaterial {
+        SurfaceMaterial(
             tint: tint,
             highlightTightness: highlightTightness,
-            highlightStretch: Float(clamped),
-            grainAngle: Float(radians),
+            finish: finish,
             name: name
         )
     }
@@ -198,10 +173,14 @@ public struct SurfaceMaterial: Sendable, Hashable {
             return SurfaceMaterial.gold.tint
         }
 
+        // Clamped, because a wide-gamut colour converts to sRGB components
+        // outside 0...1 and the shader's per-channel headroom math assumes
+        // they are inside it. An out-of-range channel would clip against the
+        // substrate clamp stripe by stripe and shift hue under a finish.
         return SIMD3(
-            Float(components[0]),
-            Float(components[1]),
-            Float(components[2])
+            Float(min(max(components[0], 0), 1)),
+            Float(min(max(components[1], 0), 1)),
+            Float(min(max(components[2], 0), 1))
         )
     }
 }

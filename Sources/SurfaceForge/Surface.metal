@@ -133,10 +133,10 @@ constant float kCockleAmplitude = 0.0020;
 // the other. That stretch is most of what separates brushed from polished, and it
 // is one direction-dependent exponent rather than a second lobe.
 
-// How far the exponent moves at full brushing. A half-width goes as the square
-// root of the exponent, so 3 makes the band sqrt(3) wider one way and sqrt(3)
-// tighter the other: a 3:1 highlight. Past about 4 it stops reading as one
-// highlight and starts reading as two.
+// Divides the along-grain exponent, so 3 makes the highlight sqrt(3) longer.
+// Widening only: tightening splits the band over the bow (silver would reach
+// 330 against its calibrated 110). 9 was tried and dissolved the band into a
+// wash.
 constant float kBrushedRatio = 3.0;
 
 // Keeps the weighting finite where the half vector meets the normal exactly. At
@@ -146,40 +146,37 @@ constant float kBrushedRatio = 3.0;
 // projection below 1e-6 of deviation, a ten-thousandth of a degree.
 constant float kBrushedFloor = 1.0e-12;
 
-/// How far the grain stretches a lobe, as a multiplier on its exponent.
+/// How far the grain widens a lobe, as a multiplier on its exponent.
 ///
-/// `brushing` is (amount, cos, sin) of the axis the highlight stretches along,
-/// solved on the CPU so no fragment pays for a sincos of a value that is uniform
-/// across the surface. It reads no light direction, so it survives being solved
-/// before the gleam and the light offset are.
+/// `brushing` is (amount, cos, sin) of the axis the highlight stretches along.
+/// Uniform for a straight grain and solved per fragment by the sunburst arm;
+/// either way the axis lives in the surface, never in the light.
 ///
-/// Measured from the half vector's deviation from the normal, not from the half
-/// vector itself. At a lobe's peak H is N, and the bow leans N by up to 3.4
-/// degrees, so the raw projection reads that lean as grain: a 45-degree grain
-/// renders at 60, and the streak's aspect falls from 3.0 to 2.2.
+/// `D` is the lobe's direction and `axis` its peak: H against N for the sheen,
+/// R against the key for the window. Each lobe reads its own deviation. The
+/// window once borrowed the sheen's stretch, which moves with the light, so
+/// the band changed shape as it travelled instead of sliding.
 ///
-/// Divided by the projections' own sum rather than by `1 - dot(N, H)^2`. That
-/// denominator is the deviation's full length while this pair measures only its
-/// surface-plane part, so the sum is what makes the ratio a squared cosine of the
-/// azimuth. It also makes the result a weighted mean of the two exponents, so it
-/// stays between them whatever the normal does.
+/// Times the squared deviation, the result is along²/ratio + across²: one
+/// quadratic fixed in the surface, so the light can move and dim the band but
+/// never reshape it. And never above 1, so no direction tightens past the
+/// exponent the bow was calibrated against.
 ///
-/// `mix` is what keeps a polished metal exactly where it was. It is
-/// `a + 0 * (b - a)` at zero, so each lobe gets its own exponent times an exact
-/// 1.0 and every surface already shipped renders the pixel it rendered before.
-/// That holds for a finite `stretch` and only for a finite one, which is why
-/// ``SurfaceMaterial/brushed(_:angle:)`` will not pass a NaN through. A branch
-/// would buy the same guarantee, and nothing else in this file branches on a
-/// uniform.
-inline float grainStretch(float3 H, float3 N, float NdotH, float3 brushing) {
-    float2 planar = H.xy - N.xy * NdotH;
+/// Measured from the deviation, not from `D` itself: the bow leans N by up to
+/// 3.4 degrees, and a raw projection would read that lean as grain.
+///
+/// `mix` keeps polished exact. `a + 0 * (b - a)` is an exact 1.0 for any
+/// finite stretch, which is why ``SurfaceFinish/brushed(angle:)`` will not
+/// pass a NaN through.
+inline float grainStretch(float3 D, float3 axis, float DdotAxis, float3 brushing) {
+    float2 planar = D.xy - axis.xy * DdotAxis;
     float2 grain  = brushing.yz;
     float along   = dot(planar, grain);
     float across  = planar.x * -grain.y + planar.y * grain.x;
     along  *= along;
     across *= across;
 
-    float stretch = (along / kBrushedRatio + across * kBrushedRatio + kBrushedFloor)
+    float stretch = (along / kBrushedRatio + across + kBrushedFloor)
                   / (along + across + kBrushedFloor);
 
     return mix(1.0, stretch, brushing.x);
@@ -265,60 +262,121 @@ inline float3 softShoulder(float3 color) {
 /// from constants that are already calibrated, instead of introducing a sixth
 /// that is not. It is the same mechanism kBowAmplitude and kCockleAmplitude use,
 /// one scale down.
-inline float3 surfaceNormal(float2 p) {
+inline float2 surfaceSlope(float2 p) {
     float3 arg    = kCockleFrequencyU * p.x + kCockleFrequencyV * p.y + kCocklePhase;
     float3 cosArg = cos(arg);
     // z(u,v) = -kBow * u^2 + cockle, so N is proportional to (-dz/du, -dz/dv, 1)
-    float2 slope = float2(-2.0 * kBowAmplitude * p.x, 0.0)
-                 + kCockleAmplitude
-                     * float2(dot(kCockleWeight * kCockleFrequencyU, cosArg),
-                              dot(kCockleWeight * kCockleFrequencyV, cosArg));
+    return float2(-2.0 * kBowAmplitude * p.x, 0.0)
+         + kCockleAmplitude
+             * float2(dot(kCockleWeight * kCockleFrequencyU, cosArg),
+                      dot(kCockleWeight * kCockleFrequencyV, cosArg));
+}
+
+/// Split out so the lines can add to the slope before it becomes a normal.
+/// Recovering a slope back out of a finished normal is not an exact round trip.
+inline float3 normalFromSlope(float2 slope) {
     return normalize(float3(-slope.x, -slope.y, 1.0));
+}
+
+inline float3 surfaceNormal(float2 p) {
+    return normalFromSlope(surfaceSlope(p));
+}
+
+// MARK: - The lines
+
+// Brushing cuts lines into the metal. These are the lines, and the stretch above is
+// what they do to light.
+//
+// Straight and evenly spaced, with no wander and no variation in density. Every
+// attempt at making them look organic turned them into wood grain, because an
+// organic directional pattern is what wood grain is. A brushed surface is ruled.
+//
+// One line every 4 points, so a line is about 2 points across: 4 device pixels at 2x
+// and 6 at 3x. A real brush line is nearer one pixel and cannot hold a lit side and
+// a dark side at that width, so these are deliberately coarser than physical. That
+// is the whole reason they are visible.
+constant float kLinePitch = 4.0;
+
+// How far a groove darkens whatever the light is doing. Without it the lines
+// only appear where the gleam crosses them, and a brushed surface shows its
+// lines on a still card.
+constant float kLineInk = 0.12;
+
+// And how much more the wall facing away from the light takes, which is what gives
+// a groove a bright side and a dark side and swaps them as the surface tilts.
+constant float kLineWall = 0.09;
+
+// The groove's own steepness, so the lines reach the gleam as well as the substrate.
+// Well under the cockle's 0.018, because a line is far finer than a cockle wave and
+// the same slope over a shorter distance is a much sharper crease.
+constant float kLineSlope = 0.012;
+
+/// One groove's anatomy, shared by every arm that cuts lines.
+///
+/// `wall` is odd about the groove's centre, one wall then the other. `hollow`
+/// is even and deepest in the cut. The phase convention is fixed by the slope:
+/// a slope of sin(phase) integrates to a height whose trough sits at phase
+/// zero, so the hollow must peak there too or the ink lands on the crest and
+/// the lines read as printed ribs rather than cut grooves.
+inline void groove(float phase, thread float &wall, thread float &hollow) {
+    wall   = sin(phase);
+    hollow = 0.5 + 0.5 * cos(phase);
+}
+
+/// The lines' slope, and how far they darken the substrate.
+///
+/// Exactly zero and exactly one at zero brushing, so a polished surface keeps the
+/// normal and the substrate it had.
+inline void engraved(
+    float2 p,
+    float3 brushing,
+    float  width,
+    float2 lightAzimuth,
+    thread float2 &slope,
+    thread float &shade
+) {
+    // `brushing.yz` is perpendicular to the stroke, so the phase runs across the
+    // lines and the lines themselves run along it. One turn of phase per pitch,
+    // measured in points, so the lines are the same width on any size of surface.
+    float2 across = brushing.yz;
+    float  phase  = dot(p, across) * (max(width, 1.0) * (M_PI_F / kLinePitch));
+
+    float wall;
+    float hollow;
+    groove(phase, wall, hollow);
+
+    slope = across * (kLineSlope * brushing.x * wall);
+    shade = 1.0
+          - brushing.x * (kLineInk * hollow
+                          + kLineWall * wall * dot(across, lightAzimuth));
 }
 
 }  // namespace SurfaceForge
 
-// MARK: - Entry point
+// MARK: - The body
 
-/// A metallic finish, applied as a filter over composited content.
+/// The calibrated metal every finish funnels into.
 ///
-/// `colorEffect`, not `layerEffect`: the normal is analytic, so no fragment ever
-/// reads a neighbour. `(position, color)` is exactly and only the input this
-/// model consumes.
+/// `finishSlope` tilts the shading normal. `finishShade` multiplies the
+/// substrate after the legibility read, so a pattern can be as strong as taste
+/// allows without costing text contrast. `brushing` reshapes the highlight.
 ///
-/// A filter over the content rather than a layer behind it, which buys three
-/// things a background layer structurally cannot:
-///
-/// - `metalTint * baseLuminance` retints the near-white surface to metal while
-///   dark content stays dark. Legibility comes from the model, not by hand.
-/// - `sheenLegibility` damps the broad sheen over glyphs, fully.
-/// - The coat takes only `kCoatLegibility` of that damping, deliberately, so the
-///   gleam crosses the content. That single cue is what makes this read as a
-///   reflection on a surface rather than as printed metallic art. A background
-///   layer cannot do it, because the content would occlude the highlight.
-///
-/// One constraint follows, and callers must respect it: chroma is discarded by
-/// the luminance step, so content is read as lightness alone. A violet accent
-/// simply becomes metal at violet's brightness.
-[[stitchable]] half4 surfaceMetal(
-    float2 position,
+/// `Grained` is a compile-time switch, so the eight grainless arms do not pay
+/// grainStretch's divides per fragment to compute a value `mix` would discard.
+/// `p` arrives from the arm, which already computed it for its own pattern.
+template <bool Grained>
+inline half4 metalBody(
+    float2 p,
     half4  color,
-    float2 viewSize,
-    float2 eye,           // (ey, ez), solved on the CPU. See virtualEye above
-    float  halfHeight,    // viewSize.y / viewSize.x, likewise
-    float3 keyDirection,  // room panel and specular, rotated by device tilt
-    float3 diffuseAxis,   // the coherent scene light
-    float  gleamAmount,   // 0...1, how much reflection shows. Gates the window,
-                          // the coat's own specular and the sheen, and not the
-                          // substrate's diffuse term. The CPU walks diffuseAxis
-                          // home instead, in SurfaceShading.lights(). At 0
-                          // nothing below reads either direction, which is what
-                          // lets the light be re-placed with nothing moving.
-    float3 metalTint,     // which metal
-    float windowExponent, // how tight this metal's travelling band is
-    float3 brushing       // (amount, cos, sin) of the grain. Zero amount is
-                          // polished, and renders exactly what polished rendered
-                          // before this argument existed
+    float2 eye,
+    float3 keyDirection,
+    float3 diffuseAxis,
+    float  gleamAmount,
+    float3 metalTint,
+    float  windowExponent,
+    float3 brushing,
+    float2 finishSlope,
+    float  finishShade
 ) {
     using namespace SurfaceForge;
 
@@ -328,9 +386,11 @@ inline float3 surfaceNormal(float2 p) {
     float3 baseStraight = float3(color.rgb) / alpha;
     if (kInputIsSRGBEncoded) { baseStraight = srgbToLinear(baseStraight); }
 
-    float2 p = surfaceCoordinates(position, viewSize, halfHeight);
     float3 V = normalize(float3(-p.x, eye.x - p.y, eye.y));
-    float3 N = surfaceNormal(p);
+
+    // The finish adds to the slope before it becomes a normal, so at zero slope
+    // the normal is the one a polished surface had.
+    float3 N = normalFromSlope(surfaceSlope(p) + finishSlope);
 
     // --- Substrate ---------------------------------------------------------
     float  diffuse = kAmbientStrength
@@ -343,11 +403,13 @@ inline float3 surfaceNormal(float2 p) {
     // Metal leaf: the substrate takes the metal's colour scaled by its own
     // luminance, so a light surface turns metal while dark content stays dark and
     // legible instead of being flooded. Metalness is 1, so this is not a mix.
-    float3 surfaceBase = metalTint * baseLuminance;
+    // The finish darkens here rather than on `baseLuminance`, so the legibility
+    // damping never mistakes a groove for the author's content. Clamped because a
+    // lit groove wall pushes the substrate up.
+    float3 surfaceBase = min(metalTint * baseLuminance * finishShade, 1.0);
     // Metals tint what they reflect; dielectrics reflect the light's own colour.
     // At metalness 1 this is the tint.
     float3 specularTint = metalTint;
-
     // --- The lobes ---------------------------------------------------------
     // The key light is directional here. What is not optional is that it is aimed
     // at the mirror of the eye rather than at the diffuse axis: on this plane the
@@ -357,15 +419,15 @@ inline float3 surfaceNormal(float2 p) {
     float3 H     = normalize(keyDirection + V);
     float  NdotH = max(dot(N, H), 0.0);
 
-    // One grain drives both lobes: this sheen and the coat's window below. The
-    // coat is thin and conformal, so a grooved leaf gives it a grooved outer face
-    // too. Brushing the sheen alone moves the surface by 2 levels, measured; the
-    // window carries the other 10.
-    float stretch = grainStretch(H, N, NdotH, brushing);
+    float3 R = reflect(-V, N);
+
+    // Each lobe is stretched about its own peak, the sheen from H off N and the
+    // window from R off the key below, which is what grainStretch requires of
+    // its callers.
+    float stretch = Grained ? grainStretch(H, N, NdotH, brushing) : 1.0;
 
     float highlightAmount = pow(NdotH, kSpecularPower * stretch) * kSpecularStrength;
 
-    float3 R = reflect(-V, N);
     // The window rides the same direction as the key light, so the broad
     // Blinn-Phong halo and the hot window core stay concentric instead of
     // fighting each other across the surface.
@@ -378,9 +440,11 @@ inline float3 surfaceNormal(float2 p) {
     // park the light at zero gleam with nothing moving on screen. Gating the
     // whole coat instead would also take the sky, and the surface would go
     // visibly flatter.
-    float windowCoupling      = pow(saturate(dot(R, keyDirection)),
-                                    windowExponent * stretch)
-                              * gleamAmount;
+    float RdotKey        = saturate(dot(R, keyDirection));
+    float windowStretch  = Grained ? grainStretch(R, keyDirection, RdotKey, brushing)
+                                   : 1.0;
+    float windowCoupling = pow(RdotKey, windowExponent * windowStretch)
+                         * gleamAmount;
     float environmentRadiance = sampleAnalyticEnvironment(R, windowCoupling);
 
     // Schlick. On a flat surface dot(N, V) runs 0.873 to 0.980, so the Fresnel
@@ -433,6 +497,458 @@ inline float3 surfaceNormal(float2 p) {
     if (kInputIsSRGBEncoded) { straight = linearToSRGB(straight); }
 
     return half4(half3(saturate(straight) * alpha), half(alpha));
+}
+
+// MARK: - Entry points
+
+// One [[stitchable]] arm per finish, not a branch on a uniform. Each arm turns
+// its pattern into a slope and a shade, then funnels into metalBody. Solvers in
+// SurfaceFinish.swift pre-multiply every coefficient, so an arm never computes a
+// value that is uniform across the surface.
+
+/// A metallic finish, applied as a filter over composited content.
+///
+/// `colorEffect`, not `layerEffect`: the normal is analytic, so no fragment ever
+/// reads a neighbour. `(position, color)` is exactly and only the input this
+/// model consumes.
+///
+/// A filter over the content rather than a layer behind it, which buys three
+/// things a background layer structurally cannot:
+///
+/// - `metalTint * baseLuminance` retints the near-white surface to metal while
+///   dark content stays dark. Legibility comes from the model, not by hand.
+/// - `sheenLegibility` damps the broad sheen over glyphs, fully.
+/// - The coat takes only `kCoatLegibility` of that damping, deliberately, so the
+///   gleam crosses the content. That single cue is what makes this read as a
+///   reflection on a surface rather than as printed metallic art. A background
+///   layer cannot do it, because the content would occlude the highlight.
+///
+/// One constraint follows, and callers must respect it: chroma is discarded by
+/// the luminance step, so content is read as lightness alone. A violet accent
+/// simply becomes metal at violet's brightness.
+[[stitchable]] half4 surfaceMetal(
+    float2 position,
+    half4  color,
+    float2 viewSize,
+    float2 eye,           // (ey, ez), solved on the CPU. See virtualEye above
+    float  halfHeight,    // viewSize.y / viewSize.x, likewise
+    float3 keyDirection,  // room panel and specular, rotated by device tilt
+    float3 diffuseAxis,   // the coherent scene light
+    float  gleamAmount,   // 0...1, how much reflection shows. Gates the window,
+                          // the coat's own specular and the sheen, and not the
+                          // substrate's diffuse term. The CPU walks diffuseAxis
+                          // home instead, in SurfaceShading.lights(). At 0
+                          // nothing below reads either direction, which is what
+                          // lets the light be re-placed with nothing moving.
+    float3 metalTint,     // which metal
+    float windowExponent, // how tight this metal's travelling band is
+    float4 brushing       // (amount, cos, sin, 0) of the grain. Zero amount
+                          // renders exactly what polished renders; the fourth
+                          // lane exists so the register matches its siblings
+) {
+    using namespace SurfaceForge;
+
+    float2 p = surfaceCoordinates(position, viewSize, halfHeight);
+    float2 lineSlope;
+    float  lineShade;
+    engraved(p, brushing.xyz, viewSize.x, diffuseAxis.xy, lineSlope, lineShade);
+
+    return metalBody<true>(p, color, eye, keyDirection, diffuseAxis,
+                           gleamAmount, metalTint, windowExponent, brushing.xyz,
+                           lineSlope, lineShade);
+}
+
+/// Polished, on its own arm so the default finish never pays for grooves or
+/// grain it does not have. Renders byte-identically to surfaceMetal with zero
+/// brushing: the constants passed here are exactly what engraved and
+/// grainStretch produce at zero, and the render test that compares the two
+/// arms is what says so.
+[[stitchable]] half4 surfacePolished(
+    float2 position,
+    half4  color,
+    float2 viewSize,
+    float2 eye,
+    float  halfHeight,
+    float3 keyDirection,
+    float3 diffuseAxis,
+    float  gleamAmount,
+    float3 metalTint,
+    float  windowExponent
+) {
+    using namespace SurfaceForge;
+
+    float2 p = surfaceCoordinates(position, viewSize, halfHeight);
+    return metalBody<false>(p, color, eye, keyDirection, diffuseAxis,
+                            gleamAmount, metalTint, windowExponent, float3(0.0),
+                            float2(0.0), 1.0);
+}
+
+/// Pinstripe: straight engraved grooves, coarser than brushing, round highlight.
+///
+/// `stripe` is (phase.x, phase.y, slope, ink) and `axis` is (across.x, across.y,
+/// wall, 0), solved in SurfaceFinish.pinstripeCoefficients. Zero brushing into
+/// the body, because a groove this coarse decorates the metal without reworking
+/// how it scatters.
+[[stitchable]] half4 surfacePinstripe(
+    float2 position,
+    half4  color,
+    float2 viewSize,
+    float2 eye,
+    float  halfHeight,
+    float3 keyDirection,
+    float3 diffuseAxis,
+    float  gleamAmount,
+    float3 metalTint,
+    float  windowExponent,
+    float4 stripe,
+    float4 axis
+) {
+    using namespace SurfaceForge;
+
+    float2 p      = surfaceCoordinates(position, viewSize, halfHeight);
+    float  phase = dot(p, stripe.xy);
+    float  wall;
+    float  hollow;
+    groove(phase, wall, hollow);
+
+    float2 slope = axis.xy * (stripe.z * wall);
+    float  shade = 1.0 - (stripe.w * hollow
+                          + axis.z * wall * dot(axis.xy, diffuseAxis.xy));
+
+    return metalBody<false>(p, color, eye, keyDirection, diffuseAxis,
+                            gleamAmount, metalTint, windowExponent, float3(0.0), slope, shade);
+}
+
+/// Carbon twill: a 2x2 weave of crowned tows, half running each way.
+///
+/// `twill` is (cells per unit, crown slope, ink, sheen) and `light` carries the
+/// diffuse light's unit azimuth, all solved in SurfaceFinish.twillCoefficients.
+/// Each tow is a shallow half-cylinder, so its crown gives it a lit wall and a
+/// dark wall; the sheen term brightens tows whose fibres run with the light,
+/// which is the cue that reads as fibre rather than checkerboard.
+[[stitchable]] half4 surfaceCarbonTwill(
+    float2 position,
+    half4  color,
+    float2 viewSize,
+    float2 eye,
+    float  halfHeight,
+    float3 keyDirection,
+    float3 diffuseAxis,
+    float  gleamAmount,
+    float3 metalTint,
+    float  windowExponent,
+    float4 twill,
+    float4 light
+) {
+    using namespace SurfaceForge;
+
+    float2 p    = surfaceCoordinates(position, viewSize, halfHeight);
+    float2 q    = p * twill.x;
+    float2 cell = floor(q);
+    float2 f    = q - cell;
+
+    // 2x2 twill: pairs of cells show the vertical tow, stepping one cell per
+    // row, which is what draws the weave's 45-degree diagonal.
+    float step     = cell.x - cell.y;
+    float phase4   = step - 4.0 * floor(step * 0.25);
+    float vertical = phase4 < 2.0 ? 1.0 : 0.0;
+
+    // The crown runs across whichever way this cell's tow lies, and is zero at
+    // both edges of the cell, so neighbouring tows meet without a step in the
+    // normal.
+    float acrossTow = mix(f.y, f.x, vertical);
+    float crown     = sin(acrossTow * (2.0 * M_PI_F)) * twill.y;
+    float2 slope    = float2(crown * vertical, crown * (1.0 - vertical));
+
+    // A seam shadow where the tow dives under its neighbour, and a sheen on
+    // tows lying along the light.
+    float  lying = mix(abs(light.x), abs(light.y), vertical);
+    float  seam  = 0.5 + 0.5 * cos(acrossTow * (2.0 * M_PI_F));
+    float  shade = 1.0 - twill.z * seam + twill.w * (lying - 0.5);
+
+    return metalBody<false>(p, color, eye, keyDirection, diffuseAxis,
+                            gleamAmount, metalTint, windowExponent, float3(0.0), slope, shade);
+}
+
+/// Knurling: two crossed families of shallow grooves, the diamond cut.
+///
+/// `knurl` is the two phase vectors and `cut` is (slope, ink, 1/|phase|),
+/// solved in SurfaceFinish.knurlCoefficients. Cut shallow on purpose: each
+/// family takes half the slope budget, because the first attempt at knurling
+/// cut to full depth and the crossed grooves dashed the gleam into segments.
+[[stitchable]] half4 surfaceKnurling(
+    float2 position,
+    half4  color,
+    float2 viewSize,
+    float2 eye,
+    float  halfHeight,
+    float3 keyDirection,
+    float3 diffuseAxis,
+    float  gleamAmount,
+    float3 metalTint,
+    float  windowExponent,
+    float4 knurl,
+    float4 cut
+) {
+    using namespace SurfaceForge;
+
+    float2 p = surfaceCoordinates(position, viewSize, halfHeight);
+
+    float phaseA  = dot(p, knurl.xy);
+    float phaseB  = dot(p, knurl.zw);
+    float wallA;
+    float wallB;
+    float hollowA;
+    float hollowB;
+    groove(phaseA, wallA, hollowA);
+    groove(phaseB, wallB, hollowB);
+
+    // Each family's slope runs along its own phase vector, rescaled to unit
+    // length on the CPU through cut.z.
+    float2 slope = (knurl.xy * wallA + knurl.zw * wallB) * (cut.x * cut.z);
+    float  shade = 1.0 - cut.y * (hollowA + hollowB) * 0.5;
+
+    return metalBody<false>(p, color, eye, keyDirection, diffuseAxis,
+                            gleamAmount, metalTint, windowExponent, float3(0.0), slope, shade);
+}
+
+// The sandblast mottle: two products of plane waves at mutually irrational
+// angles, so the blotches never repeat inside the card. Mirrored in
+// SurfaceFinish for the solver's reference pitch.
+constant float2 kBlastA = float2( 96.0, -55.0);
+constant float2 kBlastB = float2( 43.0, 101.0);
+constant float2 kBlastC = float2(-71.0,  83.0);
+
+/// Sandblasted: the bead-blast matte, a fine even mottle and nothing else.
+///
+/// `blast` is (frequency scale, mottle depth), solved in
+/// SurfaceFinish.blastCoefficients. Shade only, no slope: the first version
+/// carried its mottle in the normal and rendered as nothing, because sub-pixel
+/// normal perturbation is mathematically a roughness increase, and roughness
+/// is already the material's own dial. The shade is sized to clear the 8-bit
+/// quantum, which is the other way the first version vanished.
+[[stitchable]] half4 surfaceSandblasted(
+    float2 position,
+    half4  color,
+    float2 viewSize,
+    float2 eye,
+    float  halfHeight,
+    float3 keyDirection,
+    float3 diffuseAxis,
+    float  gleamAmount,
+    float3 metalTint,
+    float  windowExponent,
+    float4 blast
+) {
+    using namespace SurfaceForge;
+
+    float2 p = surfaceCoordinates(position, viewSize, halfHeight);
+
+    float a = dot(p, kBlastA) * blast.x;
+    float b = dot(p, kBlastB) * blast.x;
+    float c = dot(p, kBlastC) * blast.x;
+
+    float mottle = 0.5 + 0.3 * sin(a) * sin(b) + 0.2 * sin(c) * cos(a);
+    float shade  = 1.0 - blast.y * mottle;
+
+    return metalBody<false>(p, color, eye, keyDirection, diffuseAxis,
+                            gleamAmount, metalTint, windowExponent, float3(0.0), float2(0.0), shade);
+}
+
+/// Sunburst: the brushed finish bent into a circle. Rings for lines, and the
+/// grain axis solved per fragment as the radial direction, so the highlight
+/// streaks along the radius the way spun metal streaks.
+///
+/// `burst` is (ring phase per unit, stretch amount), solved in
+/// SurfaceFinish.sunburstCoefficients. Everything else reuses the brush line
+/// constants, because a sunburst is the same cut on a turning workpiece.
+///
+/// The one arm that hands metalBody a non-uniform brushing, which is exactly
+/// what grainStretch's surface-fixed quadratic permits: the axis varies over
+/// the surface, never with the light.
+[[stitchable]] half4 surfaceSunburst(
+    float2 position,
+    half4  color,
+    float2 viewSize,
+    float2 eye,
+    float  halfHeight,
+    float3 keyDirection,
+    float3 diffuseAxis,
+    float  gleamAmount,
+    float3 metalTint,
+    float  windowExponent,
+    float4 burst
+) {
+    using namespace SurfaceForge;
+
+    float2 p = surfaceCoordinates(position, viewSize, halfHeight);
+    float  r = length(p);
+    // The centre has no direction to be radial about; any unit axis serves,
+    // because every term it feeds is zero there.
+    float2 radial = r > 1.0e-4 ? p / r : float2(0.0, 1.0);
+
+    float phase = r * burst.x;
+    float wall;
+    float hollow;
+    groove(phase, wall, hollow);
+
+    float2 slope = radial * (kLineSlope * wall);
+    float  shade = 1.0 - (kLineInk * hollow
+                          + kLineWall * wall * dot(radial, diffuseAxis.xy));
+
+    return metalBody<true>(p, color, eye, keyDirection, diffuseAxis,
+                           gleamAmount, metalTint, windowExponent,
+                           float3(burst.y, radial.x, radial.y), slope, shade);
+}
+
+/// Clous de Paris: the hobnail grid, filtered. A field of rounded studs whose
+/// four faces each catch the light differently, with the valleys inked.
+///
+/// `clous` is (grid frequency per unit, peak slope, valley ink, 0), solved in
+/// SurfaceFinish.clousCoefficients. The sharp pyramid was tried and rejected:
+/// its creases alias against the resample grid, and the filtered stud reads as
+/// the same pattern at arm's length.
+[[stitchable]] half4 surfaceClousDeParis(
+    float2 position,
+    half4  color,
+    float2 viewSize,
+    float2 eye,
+    float  halfHeight,
+    float3 keyDirection,
+    float3 diffuseAxis,
+    float  gleamAmount,
+    float3 metalTint,
+    float  windowExponent,
+    float4 clous
+) {
+    using namespace SurfaceForge;
+
+    float2 p   = surfaceCoordinates(position, viewSize, halfHeight);
+    float2 arg = p * clous.x;
+    float2 s   = sin(arg);
+    float2 c   = cos(arg);
+
+    // The egg-crate field cos(x)cos(y): studs on the grid, diagonal valleys.
+    float2 slope = clous.y * float2(-s.x * c.y, -c.x * s.y);
+    float  depth = 0.5 - 0.5 * (c.x * c.y);
+    float  shade = 1.0 - clous.z * depth;
+
+    return metalBody<false>(p, color, eye, keyDirection, diffuseAxis,
+                            gleamAmount, metalTint, windowExponent, float3(0.0), slope, shade);
+}
+
+/// Basketweave: blocks of parallel ribs alternating direction like woven
+/// strap, each block ringed by a hard crease.
+///
+/// `weave` is (blocks per unit, rib slope, rib ink, rib phase per block) and
+/// `crease` is (crease half-width as a block fraction, crease ink, then the
+/// light's azimuth pre-scaled by the wall amount), solved in
+/// SurfaceFinish.basketweaveCoefficients. The crease is what sells the weave:
+/// without it neighbouring blocks share ribs and the pattern reads as a plaid
+/// rather than as straps passing over and under.
+[[stitchable]] half4 surfaceBasketweave(
+    float2 position,
+    half4  color,
+    float2 viewSize,
+    float2 eye,
+    float  halfHeight,
+    float3 keyDirection,
+    float3 diffuseAxis,
+    float  gleamAmount,
+    float3 metalTint,
+    float  windowExponent,
+    float4 weave,
+    float4 crease
+) {
+    using namespace SurfaceForge;
+
+    float2 p    = surfaceCoordinates(position, viewSize, halfHeight);
+    float2 q    = p * weave.x;
+    float2 cell = floor(q);
+    float2 f    = q - cell;
+
+    // Checkerboard parity picks which way this block's ribs run.
+    float parity   = cell.x + cell.y;
+    float vertical = (parity - 2.0 * floor(parity * 0.5)) < 0.5 ? 0.0 : 1.0;
+    float2 dir     = float2(vertical, 1.0 - vertical);
+
+    // The ribs, phase running across them. Same groove anatomy as the
+    // pinstripe: a signed wall and an even hollow.
+    float acrossRib = mix(f.y, f.x, vertical);
+    float phase     = acrossRib * weave.w;
+    float wall;
+    float hollow;
+    groove(phase, wall, hollow);
+    float2 slope    = dir * (weave.y * wall);
+
+    // The crease loop, hard by design: a tight band around the block's border.
+    float edge  = min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y));
+    float loop  = 1.0 - smoothstep(0.5 * crease.x, crease.x, edge);
+
+    float shade = 1.0 - weave.z * hollow
+                      - crease.y * loop
+                      - wall * dot(dir, crease.zw);
+
+    return metalBody<false>(p, color, eye, keyDirection, diffuseAxis,
+                            gleamAmount, metalTint, windowExponent, float3(0.0), slope, shade);
+}
+
+// The topographic field: three plane waves at mutually irrational angles, the
+// cockle's recipe an octave up. Mirrored in SurfaceFinish.TopographicField so
+// the solver can bound the gradient; a change here changes there.
+constant float3 kTopoFrequencyU = float3( 5.20, -2.90,  7.10);
+constant float3 kTopoFrequencyV = float3( 2.20,  6.90, -4.50);
+constant float3 kTopoPhase      = float3( 0.00,  2.39,  4.11);
+constant float3 kTopoWeight     = float3( 0.50,  0.30,  0.20);   // sums to 1
+
+/// Topographic: contour lines inked over low rolling hills.
+///
+/// `topo` is (frequency scale, slope amplitude, contour density, ink) and
+/// `line` is (1/points per unit, line half-width in points), solved in
+/// SurfaceFinish.topographicCoefficients. The gradient is analytic, so the
+/// line width holds in points wherever the field is steep or shallow, and the
+/// contours vanish at peaks the way real ones close on a summit.
+[[stitchable]] half4 surfaceTopographic(
+    float2 position,
+    half4  color,
+    float2 viewSize,
+    float2 eye,
+    float  halfHeight,
+    float3 keyDirection,
+    float3 diffuseAxis,
+    float  gleamAmount,
+    float3 metalTint,
+    float  windowExponent,
+    float4 topo,
+    float4 line
+) {
+    using namespace SurfaceForge;
+
+    float2 p = surfaceCoordinates(position, viewSize, halfHeight);
+
+    float3 arg    = (kTopoFrequencyU * p.x + kTopoFrequencyV * p.y) * topo.x
+                  + kTopoPhase;
+    float3 sinArg = sin(arg);
+    float3 cosArg = cos(arg);
+
+    float  height = dot(kTopoWeight, sinArg);
+    float2 grad   = topo.x
+                  * float2(dot(kTopoWeight * kTopoFrequencyU, cosArg),
+                           dot(kTopoWeight * kTopoFrequencyV, cosArg));
+    float2 slope  = grad * topo.y;
+
+    // Distance to the nearest contour, measured in the field's own value, and
+    // a line width converted into that value through the local gradient.
+    float levels    = height * topo.z;
+    float t         = levels - floor(levels);
+    float toContour = min(t, 1.0 - t);
+    float halfWidth = max(line.y * length(grad) * topo.z * line.x, 1.0e-6);
+    float contour   = 1.0 - smoothstep(0.5 * halfWidth, halfWidth, toContour);
+
+    float shade = 1.0 - topo.w * contour;
+
+    return metalBody<false>(p, color, eye, keyDirection, diffuseAxis,
+                            gleamAmount, metalTint, windowExponent, float3(0.0), slope, shade);
 }
 
 // MARK: - Probes
