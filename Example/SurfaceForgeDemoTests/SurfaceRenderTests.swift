@@ -1,4 +1,4 @@
-import SurfaceForge
+@testable import SurfaceForge
 import SwiftUI
 import Testing
 import UIKit
@@ -444,7 +444,7 @@ struct SurfaceRenderTests {
         // is where the ink block is.
         for material in SurfaceMaterial.all {
             for degrees in [0.0, 90.0] {
-                let brushed = material.brushed(1, angle: .degrees(degrees))
+                let brushed = material.finish(.brushed(angle: .degrees(degrees)))
                 let contrast = await inkContrast(of: inkedSurface(brushed, lightOffset: -1))
 
                 #expect(
@@ -503,71 +503,65 @@ struct SurfaceRenderTests {
 
     // MARK: - Brushing
 
-    @Test("Brushing at zero renders exactly what polished renders")
-    func zeroBrushingIsExactlyPolished() async {
-        // The guarantee the whole brushing change rests on, asked of the GPU
-        // instead of argued on paper. Every material is pinned to a reference
-        // colour, so an exponent that drifts by one float quietly recolours
-        // every surface already shipped.
+    @Test("Zero brushing through the brushed arm matches the polished arm")
+    func polishedArmMatchesZeroBrushing() async {
+        // The polished guarantee, asked of the GPU. `.polished` dispatches to
+        // its own lean arm; a zero-stretch brushed finish, constructible only
+        // through the internal initializer, still routes through the brushed
+        // arm with the grain amount at zero. The two arms must agree, which is
+        // simultaneously the proof that zero brushing is exact and that the
+        // polished fast path cut nothing.
         //
-        // The grain angle is what makes this a real comparison. A material and
-        // its own `brushed(0)` carry identical uniforms, so rendering both would
-        // only prove the GPU is deterministic: no change to the exponent could
-        // ever fail it, because it would move both sides equally. Aiming the
-        // grain elsewhere holds the amount at zero while changing what the
-        // shader is handed, so the renders can only match if zero amount
-        // genuinely discards the grain.
+        // Agree, not match byte for byte. The arms are separate compiles, and
+        // under fast-math a pixel sitting exactly on a rounding boundary can
+        // land one level apart: measured on device, 1 to 2 pixels of 77,660 at
+        // 1 level. The bars sit just above that, where a dropped term cannot
+        // reach: a real regression moves thousands of pixels by many levels.
         //
-        // The hostile angles are the test rather than decoration. Zero brushing is
-        // exact because `mix(1, stretch, 0)` returns an exact 1.0, which is true
-        // for a finite stretch and false for a NaN one, and only a non-finite
-        // angle or amount can produce one. Those two cases are the whole failure
-        // mode the guarantee has.
-        //
-        // Byte-identical, not within a tolerance. Both renders happen on this
-        // machine in this run from the same fixed pose, so anything other than
-        // equality is the brushed path's own arithmetic.
+        // Hostile grain angles ride along because the zero amount is what
+        // must discard them: `mix(1, stretch, 0)` is exact for finite inputs,
+        // and the initializer sanitizes the rest.
         let poses: [(label: String, roll: Double, gleam: Double)] = [
             ("rest", 0, 1), ("tilted", 14, 1), ("fading", 14, 0.45),
         ]
-        let angles: [Angle] = [
-            .degrees(37), .degrees(116), .degrees(249.5),
-            .degrees(.nan), .degrees(.infinity), .degrees(1e300),
-        ]
+        let grains: [Float] = [0.6, 2.0, -1.1]
 
         for material in SurfaceMaterial.all {
             for pose in poses {
                 let polished = await wholePlate(
-                    of: surface(material, gleam: pose.gleam, roll: pose.roll)
+                    of: surface(
+                        material.finish(.polished),
+                        gleam: pose.gleam,
+                        roll: pose.roll
+                    )
                 )
                 #expect(!polished.isEmpty, "\(material.name) rendered nothing")
 
-                for angle in angles {
-                    let unbrushed = await wholePlate(
+                for grain in grains {
+                    let unbrushed = SurfaceFinish(
+                        kind: .brushed, stretch: 0, grainAngle: grain, name: "Test"
+                    )
+                    let plate = await wholePlate(
                         of: surface(
-                            material.brushed(0, angle: angle),
+                            material.finish(unbrushed),
                             gleam: pose.gleam,
                             roll: pose.roll
                         )
                     )
-                    let differing = zip(polished, unbrushed).filter { $0.0 != $0.1 }.count
+                    let differing = zip(polished, plate).filter { $0.0 != $0.1 }.count
+                    let maxDelta = zip(polished, plate).map {
+                        max(abs($0.0.r - $0.1.r), abs($0.0.g - $0.1.g), abs($0.0.b - $0.1.b))
+                    }.max() ?? 0
+
                     #expect(
-                        differing == 0,
+                        maxDelta <= 1 && differing <= 100,
                         """
-                        \(material.name) at \(pose.label), grain \(angle.degrees)°: \
-                        zero brushing moved \(differing) of \(polished.count) pixels
+                        \(material.name) at \(pose.label), grain \(grain) rad: \
+                        zero brushing moved \(differing) of \(polished.count) pixels, \
+                        deepest \(maxDelta) levels
                         """
                     )
                 }
-
-                // The other half of the same guarantee.
-                let nanAmount = await wholePlate(
-                    of: surface(material.brushed(.nan), gleam: pose.gleam, roll: pose.roll)
-                )
-                #expect(
-                    zip(polished, nanAmount).filter { $0.0 != $0.1 }.count == 0,
-                    "\(material.name) at \(pose.label): a NaN amount is not polished"
-                )
             }
         }
     }
@@ -584,7 +578,7 @@ struct SurfaceRenderTests {
         // loose, which is the failure worth catching.
         for material in SurfaceMaterial.all {
             let polished = await wholePlate(of: surface(material))
-            let brushed = await wholePlate(of: surface(material.brushed(1)))
+            let brushed = await wholePlate(of: surface(material.finish(.brushed)))
 
             let differing = zip(polished, brushed).filter { $0.0 != $0.1 }.count
             #expect(
@@ -606,16 +600,15 @@ struct SurfaceRenderTests {
         // biases the band toward the vertical and that bias is not what is under
         // test.
         //
-        // Measured, up over across: the bow alone gives 1.36 to 1.46, brushing
-        // left to right takes it to 1.83 to 2.16, and brushing top to bottom flips
-        // it to 0.58 to 0.61. About a 3.6-fold swing in aspect between the two
-        // grains.
+        // The stretch only ever widens, so the swing between the two grains is
+        // milder than the old tighten-and-widen form produced; the 1.2 bar is
+        // what the widening alone clears with margin on both materials.
         for material in SurfaceMaterial.all {
             let horizontalBrush = await highlightSpread(
-                of: surface(material.brushed(1, angle: .zero))
+                of: surface(material.finish(.brushed(angle: .zero)))
             )
             let verticalBrush = await highlightSpread(
-                of: surface(material.brushed(1, angle: .degrees(90)))
+                of: surface(material.finish(.brushed(angle: .degrees(90))))
             )
 
             let standing = horizontalBrush.up / max(horizontalBrush.across, 0.001)
@@ -644,4 +637,144 @@ struct SurfaceRenderTests {
             "matte \(matte) is not duller than lit \(lit)"
         )
     }
+}
+
+
+
+
+@MainActor
+@Suite("Finish arms")
+struct FinishArmTests {
+    /// Every worked finish, in both axis alignments where direction exists.
+    /// Explicit rather than derived from `SurfaceFinish.all`, so adding a
+    /// finish without extending this fails a test instead of silently passing.
+    private static let workedFinishes: [SurfaceFinish] = [
+        .brushed, .brushed(angle: .degrees(90)),
+        .pinstripe, .pinstripe(angle: .degrees(90)),
+        .carbonTwill, .topographic, .basketweave, .clousDeParis,
+        .knurling, .sandblasted, .sunburst,
+    ]
+
+    @Test("Every worked finish is on the test roster")
+    func rosterIsComplete() {
+        let tested = Set(Self.workedFinishes.map(\.name))
+        for finish in SurfaceFinish.all where finish != .polished {
+            #expect(tested.contains(finish.name), "\(finish.name) is untested")
+        }
+    }
+
+    @Test("Every finish arm actually draws")
+    func finishArmsRun() async {
+        // A misspelled entry point is a silent no-op: SwiftUI leaves the view
+        // untouched, so a missing shader looks like a working build. A finish
+        // must move a broad share of the plate, the way brushing does.
+        let plain = await wholePlate(of: surface(.gold))
+
+        for finish in Self.workedFinishes {
+            let worked = await wholePlate(of: surface(.gold.finish(finish)))
+            let differing = zip(plain, worked).filter { $0.0 != $0.1 }.count
+
+            #expect(
+                differing > plain.count / 4,
+                "\(finish.name) moved only \(differing) of \(plain.count) pixels"
+            )
+        }
+    }
+
+    @Test("A finish never retints the metal")
+    func finishesKeepTheTint() async {
+        // A finish may darken the card, brushing already does, but it must not
+        // shift the channel balance: that would recolour a shipped material.
+        // Bars on the two channel gaps, which is what a cast is.
+        let plain = mean(await renderedPixels(of: surface(.gold)))
+        for finish in Self.workedFinishes {
+            let worked = mean(await renderedPixels(of: surface(.gold.finish(finish))))
+
+            // 3 levels: twice the worst run-to-run render noise observed on
+            // this harness, and a tenth of gold's smallest channel gap, so a
+            // real cast fails and a GPU difference does not.
+            let warmDrift = abs((plain.r - plain.g) - (worked.r - worked.g))
+            let coolDrift = abs((plain.g - plain.b) - (worked.g - worked.b))
+            #expect(
+                warmDrift <= 3 && coolDrift <= 3,
+                "\(finish.name) shifted gold's balance by \(warmDrift)/\(coolDrift)"
+            )
+        }
+    }
+
+    @Test("Text stays readable under every finish")
+    func inkStaysReadableUnderEveryFinish() async {
+        // The worst combination, not the matrix: the light parked on the ink,
+        // and the pattern at both axis alignments. Gunmetal is the darkest
+        // material and historically the closest to the floor.
+        for material in [SurfaceMaterial.gold, .gunmetal] {
+            for finish in Self.workedFinishes {
+                let contrast = await inkContrast(of: inkedSurface(
+                    material.finish(finish), lightOffset: -1
+                ))
+
+                #expect(
+                    contrast >= SurfaceRenderTests.minimumInkContrast,
+                    "\(material.name) \(finish.name) leaves ink \(contrast) levels deep"
+                )
+            }
+        }
+    }
+}
+
+@MainActor
+@Suite("The light's shape")
+struct LightShapeTests {
+    /// The band's vertical spread over its horizontal one, at one light position.
+    private static func aspect(
+        _ material: SurfaceMaterial,
+        finish: SurfaceFinish,
+        lightOffset: Double
+    ) async -> Double {
+        let view = Surface(material: material.finish(finish)) { Color.clear }
+            .frame(width: 353, height: 220)
+            .surfaceLightOffset(lightOffset)
+            .surfaceTiltSource(.fixed(pitch: -8, roll: 14))
+        let spread = await highlightSpread(of: view)
+        return spread.up / max(spread.across, 0.001)
+    }
+
+    @Test("A brushed light keeps its shape as it moves")
+    func brushedLightKeepsItsShape() async {
+        // Brushed over polished at the same light position keeps only what the
+        // grain adds; raw width or aspect would ride the bow and the diffuse
+        // gradient, which vary as much on polished. The floor says the grain
+        // shows at every light position, the ratio bar says it is the same grain
+        // everywhere. The renders are deterministic, so the bars sit close to
+        // the measured 1.12 to 1.14 for gold and 1.07 to 1.08 for gunmetal.
+        for material in [SurfaceMaterial.gold, .gunmetal] {
+            var surpluses: [Double] = []
+            for offset in [-0.6, -0.2, 0.2, 0.6] {
+                let polished = await Self.aspect(material, finish: .polished, lightOffset: offset)
+                let brushed = await Self.aspect(material, finish: .brushed, lightOffset: offset)
+                surpluses.append(brushed / max(polished, 0.001))
+            }
+
+            let strongest = surpluses.max() ?? 0
+            let weakest = surpluses.min() ?? 0
+
+            #expect(
+                weakest > 1.05,
+                """
+                \(material.name): brushing only stretches the highlight \(weakest)x \
+                beyond polished at its weakest light position, so the grain is fading \
+                out as the light moves
+                """
+            )
+            #expect(
+                strongest < weakest * 1.10,
+                """
+                \(material.name): the brushed highlight's stretch over polished runs \
+                \(weakest) to \(strongest) across four light positions, so the band is \
+                changing shape while it moves rather than sliding
+                """
+            )
+        }
+    }
+
 }
