@@ -244,32 +244,32 @@ extension SurfaceFinish {
 }
 
 extension SurfaceFinish {
-    /// One stripe every 8 points. At least 8 device pixels on any scale, which
-    /// is the floor under a feature before rasterizing and the lean's resample
-    /// grid make it crawl.
-    static let pinstripePitch: Float = 8
+    /// One stripe every 16 points, twice the brush pitch, because a pinstripe
+    /// is sparse thin lines on open metal where brushing is lines wall to
+    /// wall. Comfortably above the 8-device-pixel feature floor.
+    static let pinstripePitch: Float = 16
 
     /// Steeper than brushing's 0.012, because a stripe is the drawn feature
     /// here rather than a texture under one, and still under the 0.030 ceiling
     /// the travelling gleam can resolve.
-    static let pinstripeSlope: Float = 0.020
+    static let pinstripeSlope: Float = 0.026
 
-    /// How far a stripe's hollow darkens the surface, and how much extra the
-    /// wall facing away from the light takes.
-    static let pinstripeInk: Float = 0.10
-    static let pinstripeWall: Float = 0.10
+    /// Ink low and wall high: the line is mostly the light catching its cut
+    /// edge, not pigment. Flat darkening is what read as dirt.
+    static let pinstripeInk: Float = 0.06
+    static let pinstripeWall: Float = 0.14
 
     /// One tow every 8 points, the same floor the pinstripe pitch sits on.
     static let twillCellPoints: Float = 8
 
     /// The crown's peak slope. Under the 0.030 ceiling, and softer than the
     /// pinstripe's cut because a tow is cloth pressed in, not a groove.
-    static let twillCrownSlope: Float = 0.022
+    static let twillCrownSlope: Float = 0.028
 
     /// The seam's darkening where a tow dives under its neighbour, and the
     /// sheen a tow gains for lying along the light.
-    static let twillSeamInk: Float = 0.10
-    static let twillSheen: Float = 0.06
+    static let twillSeamInk: Float = 0.05
+    static let twillSheen: Float = 0.09
 
     /// Coefficients for the carbon twill arm at one drawn size.
     ///
@@ -366,11 +366,11 @@ extension SurfaceFinish {
     /// Rib amplitudes, pinstripe's family. The crease is darker than any rib
     /// hollow because it stands for a strap in full shadow, and its width is a
     /// fraction of the block so the loop scales with the weave.
-    static let basketweaveRibSlope: Float = 0.020
-    static let basketweaveRibInk: Float = 0.09
-    static let basketweaveWall: Float = 0.08
+    static let basketweaveRibSlope: Float = 0.026
+    static let basketweaveRibInk: Float = 0.05
+    static let basketweaveWall: Float = 0.12
     static let basketweaveCreaseWidth: Float = 1.5 / 18
-    static let basketweaveCreaseInk: Float = 0.14
+    static let basketweaveCreaseInk: Float = 0.10
 
     /// Coefficients for the basketweave arm at one drawn size.
     ///
@@ -404,8 +404,8 @@ extension SurfaceFinish {
     /// margin under the 0.030 ceiling because all four faces of a stud take
     /// it, twice per grid cell.
     static let clousPitchPoints: Float = 10
-    static let clousSlope: Float = 0.024
-    static let clousValleyInk: Float = 0.10
+    static let clousSlope: Float = 0.028
+    static let clousValleyInk: Float = 0.06
 
     /// Coefficients for the clous de Paris arm at one drawn size.
     ///
@@ -429,7 +429,7 @@ extension SurfaceFinish {
     static let knurlPitchPoints: Float = 6
     static let knurlAngle: Float = .pi / 6
     static let knurlSlope: Float = 0.014
-    static let knurlInk: Float = 0.07
+    static let knurlInk: Float = 0.04
 
     /// Coefficients for the knurling arm at one drawn size.
     ///
@@ -454,7 +454,7 @@ extension SurfaceFinish {
     /// The mottle's depth in shade. 0.05 of a 0.87-luminance substrate is
     /// about 11 of 255 levels, which is why this cannot fall under the 8-bit
     /// quantum the way the normal-borne version did.
-    static let blastDepth: Float = 0.05
+    static let blastDepth: Float = 0.03
 
     /// Coefficients for the sandblasted arm at one drawn size.
     ///
