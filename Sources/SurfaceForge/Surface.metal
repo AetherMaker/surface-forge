@@ -610,10 +610,16 @@ inline half4 metalBody(
     float  wall;
     float  hollow;
     groove(phase, wall, hollow);
+    // The hollow cubed narrows the line to about a fifth of the pitch, and the
+    // wall is windowed by the same square so the cut is a thin V in otherwise
+    // flat metal. An unwindowed sine here rolled the whole pitch into soft
+    // ribs and the finish read as corduroy, not pinstripe.
+    float  line = hollow * hollow * hollow;
+    float  cut  = wall * hollow * hollow;
 
-    float2 slope = axis.xy * (stripe.z * wall);
-    float  shade = 1.0 - (stripe.w * hollow
-                          + axis.z * wall * dot(axis.xy, diffuseAxis.xy));
+    float2 slope = axis.xy * (stripe.z * cut);
+    float  shade = 1.0 - (stripe.w * line
+                          + axis.z * cut * dot(axis.xy, diffuseAxis.xy));
 
     return metalBody<false>(p, color, eye, keyDirection, diffuseAxis,
                             gleamAmount, metalTint, windowExponent, float3(0.0), slope, shade);
