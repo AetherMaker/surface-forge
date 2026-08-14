@@ -50,7 +50,7 @@ struct ExhibitContent: View {
     var body: some View {
         switch design {
         case .membershipCard: membershipCard
-        case .eventTicket: eventTicket
+        case .platinumCard: platinumCard
         case .bankCard: bankCard
         case .keyCard: keyCard
         case .expeditionPass: expeditionPass
@@ -81,32 +81,40 @@ struct ExhibitContent: View {
         }
     }
 
-    private var eventTicket: some View {
-        HStack(spacing: 16) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("SURFACEFORGE LIVE")
-                    .font(.system(size: 13, weight: .semibold))
-                    .tracking(2)
-                Text("Hall 3 · Door B")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
+    /// Mostly bare metal on purpose: a brushed card's beauty is the grain,
+    /// so the type stays at the edges and lets the surface carry the middle.
+    private var platinumCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top) {
+                Text("AURUM")
+                    .font(.system(size: 15, weight: .semibold))
+                    .tracking(5)
                 Spacer()
-                Text("AUG 14 · 21:00")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
+                HStack(spacing: -7) {
+                    Circle().strokeBorder(.secondary, lineWidth: 1.2)
+                        .frame(width: 22, height: 22)
+                    Circle().strokeBorder(.tertiary, lineWidth: 1.2)
+                        .frame(width: 22, height: 22)
+                }
             }
-            DashedRule()
-                .stroke(style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
-                .frame(width: 1)
-                .foregroundStyle(.tertiary)
-            VStack(spacing: 2) {
-                Text("ROW")
-                    .font(.system(size: 9))
-                    .foregroundStyle(.tertiary)
-                Text("G12")
-                    .font(.system(size: 22, weight: .semibold))
+
+            Spacer()
+
+            Text("M. AETHER")
+                .font(.system(size: 13, weight: .medium))
+                .tracking(2)
+                .foregroundStyle(.secondary)
+            HStack {
+                Text("····  7208")
+                    .font(.system(size: 15, weight: .semibold))
                     .monospacedDigit()
+                Spacer()
+                Text("09 / 29")
+                    .font(.system(size: 11, weight: .medium))
+                    .monospacedDigit()
+                    .foregroundStyle(.tertiary)
             }
+            .padding(.top, 4)
         }
     }
 
@@ -251,15 +259,5 @@ struct ExhibitContent: View {
                 .font(.system(size: 18, weight: .semibold))
                 .monospacedDigit()
         }
-    }
-}
-
-/// The ticket's perforation line.
-private struct DashedRule: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: CGPoint(x: rect.midX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
-        return path
     }
 }
