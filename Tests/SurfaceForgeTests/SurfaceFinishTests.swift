@@ -218,6 +218,21 @@ struct SurfaceFinishTests {
         #expect(c.b.x.isFinite && c.b.y.isFinite)
     }
 
+    @Test("Only sandblasted scatters the highlight")
+    func onlySandblastedScatters() {
+        for material in SurfaceMaterial.all {
+            for finish in SurfaceFinish.all {
+                let effective = finish.effectiveTightness(of: material)
+                if finish.name == "Sandblasted" {
+                    #expect(effective < material.highlightTightness)
+                } else {
+                    // Exact, not approximate: polished rides this value.
+                    #expect(effective == material.highlightTightness)
+                }
+            }
+        }
+    }
+
     @Test("A finish leaves the metal itself alone")
     func finishPreservesTheMetal() {
         for material in SurfaceMaterial.all {

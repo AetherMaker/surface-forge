@@ -24,7 +24,7 @@ extension View {
         )
         let amount = Float(min(max(gleam, 0), 1))
         let tint = material.tint
-        let tightness = material.highlightTightness
+        let tightness = material.surfaceFinish.effectiveTightness(of: material)
         let offset = min(max(lightOffset, -1), 1)
 
         let finish = material.surfaceFinish
