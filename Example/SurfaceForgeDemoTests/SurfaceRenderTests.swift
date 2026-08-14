@@ -763,6 +763,38 @@ private func patternEnergy<V: View>(of view: V) async -> Double {
     return count == 0 ? 0 : energy / Double(count)
 }
 
+/// One draw's cost, as the best of a burst. The minimum is the honest read:
+/// noise only ever adds time.
+@MainActor
+private func renderCost<V: View>(of view: V) async -> Double {
+    let size = CGSize(width: 353, height: 220)
+    let host = UIHostingController(rootView: view)
+    host.safeAreaRegions = []
+    host.view.frame = CGRect(origin: .zero, size: size)
+    host.view.backgroundColor = .black
+    let scene = UIApplication.shared.connectedScenes
+        .compactMap { $0 as? UIWindowScene }.first
+    let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+    window.windowScene = scene
+    window.rootViewController = host
+    window.makeKeyAndVisible()
+    window.layoutIfNeeded()
+    for _ in 0..<12 { try? await Task.sleep(for: .milliseconds(50)) }
+
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    let renderer = UIGraphicsImageRenderer(size: size, format: format)
+    var best = Double.infinity
+    for _ in 0..<12 {
+        let start = CFAbsoluteTimeGetCurrent()
+        _ = renderer.image { _ in
+            host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+        }
+        best = min(best, CFAbsoluteTimeGetCurrent() - start)
+    }
+    return best * 1000
+}
+
 @MainActor
 @Suite("Finish appearance")
 struct FinishAppearanceTests {
@@ -812,6 +844,27 @@ struct FinishAppearanceTests {
             #expect(
                 abs(pattern - entry.pattern) <= entry.pattern * 0.3 + 0.03,
                 "\(entry.name)'s pattern reads \(pattern) against \(entry.pattern)"
+            )
+        }
+    }
+}
+
+@MainActor
+@Suite("Finish cost")
+struct FinishCostTests {
+    @Test("No finish arm costs multiples of polished")
+    func armsStayNearPolished() async {
+        let polished = await renderCost(of: surface(.gold))
+        #expect(polished > 0, "the cost harness measured nothing")
+
+        for finish in SurfaceFinish.all {
+            let cost = await renderCost(of: surface(.gold.finish(finish)))
+            // Measured 0.95x to 1.05x of polished on device. 2x is a pathology
+            // bar rather than a tuning bar, so device differences cannot move
+            // it; an arm with an accidental loop or texture stall can.
+            #expect(
+                cost < polished * 2,
+                "\(finish.name) draws at \(cost) ms against polished \(polished) ms"
             )
         }
     }
