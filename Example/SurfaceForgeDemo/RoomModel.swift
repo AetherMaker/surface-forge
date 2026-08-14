@@ -12,7 +12,7 @@ struct Exhibit: Identifiable, Hashable {
     let cornerRadius: CGFloat
 
     enum Design: Hashable {
-        case membershipCard, eventTicket, bankCard, keyCard, expeditionPass
+        case membershipCard, platinumCard, bankCard, keyCard, expeditionPass
         case giftCard, plaque, shopTag, boardingPass, recordClub
     }
 
@@ -21,8 +21,8 @@ struct Exhibit: Identifiable, Hashable {
     static let all: [Exhibit] = [
         Exhibit(finish: .polished, design: .membershipCard, material: .gold,
                 ratio: 353 / 220, cornerRadius: 22),
-        Exhibit(finish: .brushed, design: .eventTicket, material: .silver,
-                ratio: 2.0, cornerRadius: 14),
+        Exhibit(finish: .brushed, design: .platinumCard, material: .silver,
+                ratio: 353 / 220, cornerRadius: 22),
         Exhibit(finish: .pinstripe, design: .bankCard, material: .brass,
                 ratio: 353 / 220, cornerRadius: 22),
         Exhibit(finish: .carbonTwill, design: .keyCard, material: .gunmetal,
