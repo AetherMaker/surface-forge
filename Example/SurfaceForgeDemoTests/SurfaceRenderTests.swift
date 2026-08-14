@@ -722,6 +722,101 @@ struct FinishArmTests {
     }
 }
 
+/// The pattern's strength: mean high-pass energy over the middle band,
+/// deliberately blind to the pattern's orientation. A high pass along one
+/// axis once read a horizontal grain as nothing, which is the trap this
+/// isotropic form avoids.
+@MainActor
+private func patternEnergy<V: View>(of view: V) async -> Double {
+    let raw = await rawPixels(of: view, size: CGSize(width: 353, height: 220))
+    guard !raw.pixels.isEmpty else { return 0 }
+
+    let x0 = raw.width / 3, x1 = 2 * raw.width / 3
+    let y0 = raw.height / 3, y1 = 2 * raw.height / 3
+    let bandWidth = x1 - x0
+    var luma = [Double]()
+    luma.reserveCapacity(bandWidth * (y1 - y0))
+    for y in y0..<y1 {
+        for x in x0..<x1 {
+            let i = (y * raw.width + x) * 4
+            luma.append(luminance(
+                (Int(raw.pixels[i]), Int(raw.pixels[i + 1]), Int(raw.pixels[i + 2]))
+            ))
+        }
+    }
+
+    let rows = luma.count / bandWidth
+    var energy = 0.0
+    var count = 0
+    for y in 2..<(rows - 2) {
+        for x in 2..<(bandWidth - 2) {
+            var local = 0.0
+            for dy in -2...2 {
+                for dx in -2...2 {
+                    local += luma[(y + dy) * bandWidth + (x + dx)]
+                }
+            }
+            energy += abs(luma[y * bandWidth + x] - local / 25)
+            count += 1
+        }
+    }
+    return count == 0 ? 0 : energy / Double(count)
+}
+
+@MainActor
+@Suite("Finish appearance")
+struct FinishAppearanceTests {
+    /// What each finish renders on gold at the fixed pose: middle-band mean
+    /// colour and pattern energy, captured on device. Any change to an arm, a
+    /// solver or an amplitude moves one of these, and this says which and by
+    /// how much. Update them deliberately, never to make a run go green.
+    static let reference: [(name: String, r: Int, g: Int, b: Int, pattern: Double)] = [
+        ("Polished", 241, 228, 165, 0.12),
+        ("Brushed", 240, 226, 164, 1.59),
+        ("Pinstripe", 241, 227, 164, 0.30),
+        ("Carbon twill", 240, 225, 162, 1.21),
+        ("Topographic", 241, 227, 164, 0.33),
+        ("Basketweave", 240, 225, 162, 1.85),
+        ("Clous de Paris", 240, 226, 163, 1.19),
+        ("Knurling", 240, 226, 163, 0.93),
+        ("Sandblasted", 241, 227, 164, 0.17),
+        ("Sunburst", 241, 228, 166, 1.65),
+    ]
+
+    @Test("Every finish renders the appearance it is meant to")
+    func finishesMatchTheirReference() async {
+        // The roster check first, so an eleventh finish cannot ship unpinned.
+        #expect(Self.reference.count == SurfaceFinish.all.count)
+
+        for entry in Self.reference {
+            guard let finish = SurfaceFinish.all.first(where: { $0.name == entry.name })
+            else {
+                Issue.record("\(entry.name) has a reference but is not a finish")
+                continue
+            }
+
+            let view = surface(.gold.finish(finish))
+            let got = mean(await renderedPixels(of: view))
+            let drift = max(
+                abs(got.r - entry.r), abs(got.g - entry.g), abs(got.b - entry.b)
+            )
+            #expect(
+                drift <= 6,
+                "\(entry.name) moved to \(got.r),\(got.g),\(got.b) from \(entry.r),\(entry.g),\(entry.b)"
+            )
+
+            let pattern = await patternEnergy(of: view)
+            // 30% plus a floor's worth of absolute slack: comfortably past
+            // run-to-run noise, well under the factor a lost or doubled term
+            // moves a pattern by.
+            #expect(
+                abs(pattern - entry.pattern) <= entry.pattern * 0.3 + 0.03,
+                "\(entry.name)'s pattern reads \(pattern) against \(entry.pattern)"
+            )
+        }
+    }
+}
+
 @MainActor
 @Suite("The light's shape")
 struct LightShapeTests {
