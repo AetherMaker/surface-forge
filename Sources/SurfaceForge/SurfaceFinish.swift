@@ -451,6 +451,19 @@ extension SurfaceFinish {
         return coefficients
     }
 
+    /// How far blasting scatters the highlight: the window keeps a third of
+    /// the material's tightness, landing gold between copper and gunmetal.
+    /// The mottle alone left sandblasted indistinguishable from polished,
+    /// because a blasted surface's real signature is its soft wide gleam.
+    static let blastScatter: Float = 0.35
+
+    /// The material's highlight tightness as this finish wears it.
+    func effectiveTightness(of material: SurfaceMaterial) -> Float {
+        kind == .sandblasted
+            ? material.highlightTightness * Self.blastScatter
+            : material.highlightTightness
+    }
+
     /// The mottle's depth in shade. 0.05 of a 0.87-luminance substrate is
     /// about 11 of 255 levels, which is why this cannot fall under the 8-bit
     /// quantum the way the normal-borne version did.
