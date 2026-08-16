@@ -65,7 +65,7 @@ https://github.com/AetherMaker/surface-forge
 **Package.swift.**
 
 ```swift
-.package(url: "https://github.com/AetherMaker/surface-forge", from: "0.3.0")
+.package(url: "https://github.com/AetherMaker/surface-forge", from: "0.3.2")
 ```
 
 ## Materials
@@ -169,9 +169,9 @@ The same metal, worked differently:
 Surface(material: .gold.finish(.brushed)) { … }
 ```
 
-Ten finishes ship: polished (the default), brushed, pinstripe, carbon twill,
-topographic, basketweave, clous de Paris, knurling, sandblasted and sunburst.
-Brushed and pinstripe take a direction:
+Eleven finishes ship: polished (the default), brushed, pinstripe, carbon
+twill, topographic, basketweave, clous de Paris, knurling, sandblasted,
+sunburst and molten. Brushed and pinstripe take a direction:
 
 ```swift
 .gold.finish(.brushed(angle: .degrees(90)))
@@ -179,8 +179,11 @@ Brushed and pinstripe take a direction:
 
 `SurfaceFinish.all` lists them for pickers, `hasDirection` says whether an
 angle means anything, and `aimed(at:)` applies one where it does. A finish
-never changes the metal itself: same tint, same highlight character, and
-text on the surface stays legible under every pattern.
+never changes the metal itself: same tint, and text on the surface stays
+legible under every pattern. Two retune the highlight the way the real work
+would: sandblasted scatters it soft and wide, and molten, which turns the
+surface itself to liquid, folds it into tongues of light that swirl as the
+device tilts.
 
 ## Requirements
 
