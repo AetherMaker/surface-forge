@@ -23,6 +23,7 @@ public struct SurfaceFinish: Sendable, Hashable {
         case knurling
         case sandblasted
         case sunburst
+        case molten
     }
 
     let kind: Kind
@@ -181,10 +182,20 @@ public struct SurfaceFinish: Sendable, Hashable {
         name: "Sunburst"
     )
 
+    /// Melted: the surface itself is liquid, and tongues of light swirl
+    /// across it as the device tilts.
+    public static let molten = SurfaceFinish(
+        kind: .molten,
+        stretch: 0,
+        grainAngle: 0,
+        name: "Molten"
+    )
+
     /// Every built-in finish, for pickers and galleries.
     public static let all: [SurfaceFinish] = [
         .polished, .brushed, .pinstripe, .carbonTwill, .topographic,
         .basketweave, .clousDeParis, .knurling, .sandblasted, .sunburst,
+        .molten,
     ]
 
     // MARK: - Sanitizing
@@ -459,9 +470,11 @@ extension SurfaceFinish {
 
     /// The material's highlight tightness as this finish wears it.
     func effectiveTightness(of material: SurfaceMaterial) -> Float {
-        kind == .sandblasted
-            ? material.highlightTightness * Self.blastScatter
-            : material.highlightTightness
+        switch kind {
+        case .sandblasted: material.highlightTightness * Self.blastScatter
+        case .molten: material.highlightTightness * Self.moltenFocus
+        default: material.highlightTightness
+        }
     }
 
     /// The mottle's depth in shade. 0.05 of a 0.87-luminance substrate is
@@ -496,6 +509,105 @@ extension SurfaceFinish {
 
         var coefficients = SurfaceFinishCoefficients()
         coefficients.a = SIMD4(pointsPerUnit * .pi / 2, stretch, 0, 0)
+        return coefficients
+    }
+
+    /// The melt's flow field, mirrored from the shader so the solver can
+    /// hold each part's slope at its bar. The weld test keeps the copies
+    /// equal.
+    enum MoltenFlow {
+        /// The broad swells, 150 to 250 points.
+        static let swellWaves: [SIMD2<Float>] = [
+            [4.1, 2.7], [-5.2, 3.4], [1.9, -4.6],
+        ]
+        static let swellPhase: SIMD3<Float> = [0.9, 2.3, 4.8]
+        static let swellWeight: SIMD3<Float> = [0.42, 0.33, 0.25]
+
+        /// The ripples riding them, 70 to 100 points.
+        static let rippleWaves: [SIMD2<Float>] = [
+            [9.7, 6.3], [-11.4, 7.9], [5.1, -10.8],
+        ]
+        static let ripplePhase: SIMD3<Float> = [2.2, 4.7, 0.6]
+        static let rippleWeight: SIMD3<Float> = [0.4, 0.33, 0.27]
+
+        /// The warp both wave sets are read through.
+        static let warpWaveA: SIMD2<Float> = [2.9, -1.8]
+        static let warpWaveB: SIMD2<Float> = [2.2, 3.1]
+        static let warpPhase: SIMD2<Float> = [1.4, 4.2]
+        static let warpAmount: Float = 0.20
+
+        /// Peak gradient of each part at unit scale, measured over the
+        /// padded card. The solver divides each bar by these; a test
+        /// re-measures them.
+        static let swellPeak: Float = 6.286
+        static let ripplePeak: Float = 15.353
+
+        /// Both slope parts at one point, mirroring the shader's arm.
+        static func parts(
+            _ p: SIMD2<Float>
+        ) -> (swell: SIMD2<Float>, ripple: SIMD2<Float>) {
+            let argA = simd_dot(warpWaveA, p) + warpPhase.x
+            let argB = simd_dot(warpWaveB, p) + warpPhase.y
+            let warped = p + warpAmount * SIMD2<Float>(sin(argA), sin(argB))
+            let cA = warpAmount * cos(argA)
+            let cB = warpAmount * cos(argB)
+
+            func gradient(
+                _ waves: [SIMD2<Float>], _ phase: SIMD3<Float>, _ weight: SIMD3<Float>
+            ) -> SIMD2<Float> {
+                var g = SIMD2<Float>.zero
+                for i in 0..<3 {
+                    let w = weight[i] * cos(simd_dot(waves[i], warped) + phase[i])
+                    g += waves[i] * w
+                }
+                // Chain rule through the warp.
+                return SIMD2(
+                    g.x * (1 + cA * warpWaveA.x) + g.y * (cB * warpWaveB.x),
+                    g.x * (cA * warpWaveA.y) + g.y * (1 + cB * warpWaveB.y)
+                )
+            }
+
+            return (
+                gradient(swellWaves, swellPhase, swellWeight),
+                gradient(rippleWaves, ripplePhase, rippleWeight)
+            )
+        }
+    }
+
+    /// The melt's peak slope. Well past the 0.030 ceiling on purpose: the
+    /// ceiling protects a flat card's gleam from texture, and a melt is not
+    /// a flat card. 0.50 is a 27-degree wave wall, which folds the light
+    /// into tongues without tearing it into glitter.
+    static let moltenSlope: Float = 0.50
+
+    /// The ripples' share of the slope. Under a third reads as wavy polish;
+    /// near half the tongues fray.
+    static let moltenRippleShare: Float = 0.42
+
+    /// How much melting tightens the highlight. A melt has no tooling
+    /// marks, so its window is narrower than the solid metal's; 1.5 puts
+    /// gold at the knee near 100 where the band stops narrowing.
+    static let moltenFocus: Float = 1.5
+
+    /// Coefficients for the molten arm at one drawn size.
+    ///
+    /// Slots: `a` = (frequency scale, swell amplitude, ripple amplitude, 0).
+    /// Each amplitude is divided by its part's peak and the scale, so the
+    /// slopes hold their bars on any card size.
+    func moltenCoefficients(size: CGSize) -> SurfaceFinishCoefficients {
+        let pointsPerUnit = Self.pointsPerUnit(for: size)
+        let scale = pointsPerUnit / Self.referencePointsPerUnit
+        let safeScale = max(scale, 1.0e-3)
+
+        var coefficients = SurfaceFinishCoefficients()
+        coefficients.a = SIMD4(
+            scale,
+            Self.moltenSlope * (1 - Self.moltenRippleShare)
+                / (MoltenFlow.swellPeak * safeScale),
+            Self.moltenSlope * Self.moltenRippleShare
+                / (MoltenFlow.ripplePeak * safeScale),
+            0
+        )
         return coefficients
     }
 

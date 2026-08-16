@@ -2,6 +2,7 @@
 import SwiftUI
 import Testing
 import UIKit
+import simd
 
 // Renders a surface for real and reads its pixels back.
 //
@@ -185,6 +186,27 @@ private func highlightSpread<V: View>(of view: V) async -> (across: Double, up: 
     return ((vx / weightSum).squareRoot(), (vy / weightSum).squareRoot())
 }
 
+/// The plate's mean colour in linear light, decoded before averaging.
+/// Averaging encoded pixels biases the mean toward the bright end.
+@MainActor
+private func linearPlateMean<V: View>(of view: V) async -> SIMD3<Double> {
+    let raw = await rawPixels(of: view, size: CGSize(width: 353, height: 220))
+    guard !raw.pixels.isEmpty else { return .zero }
+
+    func decode(_ value: UInt8) -> Double {
+        let c = Double(value) / 255
+        return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+    }
+
+    var sum = SIMD3<Double>.zero
+    for i in stride(from: 0, to: raw.width * raw.height * 4, by: 4) {
+        sum += SIMD3(
+            decode(raw.pixels[i]), decode(raw.pixels[i + 1]), decode(raw.pixels[i + 2])
+        )
+    }
+    return sum / Double(raw.width * raw.height)
+}
+
 /// Rec. 601 luma, the same weighting the shader applies to content.
 private func luminance(_ c: (r: Int, g: Int, b: Int)) -> Double {
     let r = Double(c.r) * 0.299
@@ -204,6 +226,14 @@ private func surface(
         .frame(width: 353, height: 220)
         .surfaceGleam(gleam)
         .surfaceTiltSource(.fixed(pitch: -8, roll: roll))
+}
+
+/// A plate mean reduced to hue: unit luminance in linear light, so a finish
+/// that merely darkens or brightens the card moves nowhere.
+private func hue(_ mean: SIMD3<Double>) -> SIMD3<Double> {
+    let luminance = mean.x * 0.299 + mean.y * 0.587 + mean.z * 0.114
+    guard luminance > 1e-9 else { return .zero }
+    return mean / luminance
 }
 
 /// Every pixel, not the middle band.
@@ -652,7 +682,7 @@ struct FinishArmTests {
         .brushed, .brushed(angle: .degrees(90)),
         .pinstripe, .pinstripe(angle: .degrees(90)),
         .carbonTwill, .topographic, .basketweave, .clousDeParis,
-        .knurling, .sandblasted, .sunburst,
+        .knurling, .sandblasted, .sunburst, .molten,
     ]
 
     @Test("Every worked finish is on the test roster")
@@ -683,23 +713,55 @@ struct FinishArmTests {
 
     @Test("A finish never retints the metal")
     func finishesKeepTheTint() async {
-        // A finish may darken the card, brushing already does, but it must not
-        // shift the channel balance: that would recolour a shipped material.
-        // Bars on the two channel gaps, which is what a cast is.
-        let plain = mean(await renderedPixels(of: surface(.gold)))
-        for finish in Self.workedFinishes {
-            let worked = mean(await renderedPixels(of: surface(.gold.finish(finish))))
+        // A finish may darken the card or move its light; it must not
+        // recolour the metal. Channel gaps of sRGB means read relocated
+        // window light as a cast, so ask the question directly instead:
+        // could the worked card pass for a different shipped metal? At unit
+        // luminance in linear light, so darkening cannot pose as hue, the
+        // worked plate must sit nearer plain gold than any other metal, and
+        // clearly so.
+        var plains: [(name: String, hue: SIMD3<Double>)] = []
+        for material in SurfaceMaterial.all {
+            plains.append((material.name, hue(await linearPlateMean(of: surface(material)))))
+        }
 
-            // 3 levels: twice the worst run-to-run render noise observed on
-            // this harness, and a tenth of gold's smallest channel gap, so a
-            // real cast fails and a GPU difference does not.
-            let warmDrift = abs((plain.r - plain.g) - (worked.r - worked.g))
-            let coolDrift = abs((plain.g - plain.b) - (worked.g - worked.b))
+        for finish in Self.workedFinishes {
+            let worked = hue(await linearPlateMean(of: surface(.gold.finish(finish))))
+            let ranked = plains
+                .map { (name: $0.name, distance: simd_length(worked - $0.hue)) }
+                .sorted { $0.distance < $1.distance }
+
             #expect(
-                warmDrift <= 3 && coolDrift <= 3,
-                "\(finish.name) shifted gold's balance by \(warmDrift)/\(coolDrift)"
+                ranked[0].name == "Gold",
+                "\(finish.name) reads nearest \(ranked[0].name), not gold"
+            )
+            #expect(
+                ranked[0].distance < ranked[1].distance * 0.7,
+                """
+                \(finish.name) sits \(ranked[0].distance) from gold and only \
+                \(ranked[1].distance) from \(ranked[1].name)
+                """
             )
         }
+    }
+
+    @Test("The nearest-metal measure sees a real cast")
+    func castMeasureSeesACast() async {
+        // The control: a measure blind to colour would pass the test above
+        // forever. Brass must read as brass and rose gold as rose gold.
+        var plains: [(name: String, hue: SIMD3<Double>)] = []
+        for material in SurfaceMaterial.all {
+            plains.append((material.name, hue(await linearPlateMean(of: surface(material)))))
+        }
+
+        func nearest(_ worked: SIMD3<Double>) -> String {
+            plains.min { simd_length(worked - $0.hue) < simd_length(worked - $1.hue) }!.name
+        }
+
+        let brass = hue(await linearPlateMean(of: surface(.brass)))
+        let roseGold = hue(await linearPlateMean(of: surface(.roseGold)))
+        #expect(nearest(brass) == "Brass", "brass reads as \(nearest(brass))")
+        #expect(nearest(roseGold) == "Rose gold", "rose gold reads as \(nearest(roseGold))")
     }
 
     @Test("Text stays readable under every finish")
@@ -813,6 +875,7 @@ struct FinishAppearanceTests {
         ("Knurling", 240, 226, 163, 0.93),
         ("Sandblasted", 241, 227, 164, 0.17),
         ("Sunburst", 241, 228, 166, 1.65),
+        ("Molten", 224, 200, 129, 0.22),
     ]
 
     @Test("Every finish renders the appearance it is meant to")

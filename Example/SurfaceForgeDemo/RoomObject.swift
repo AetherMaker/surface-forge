@@ -41,7 +41,7 @@ struct Placard: View {
     }
 }
 
-/// Ten designs, so the ten finishes each dress something worth engraving.
+/// Eleven designs, so the eleven finishes each dress something worth engraving.
 struct ExhibitContent: View {
     let design: Exhibit.Design
     let model: RoomModel
@@ -59,6 +59,7 @@ struct ExhibitContent: View {
         case .shopTag: shopTag
         case .boardingPass: boardingPass
         case .recordClub: recordClub
+        case .ingotStamp: ingotStamp
         }
     }
 
@@ -245,6 +246,27 @@ struct ExhibitContent: View {
                 .font(.system(size: 10, weight: .medium))
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    /// Nearly bare, the platinum card's reasoning: the flow is the piece,
+    /// so the stamp sits small and central the way a bar is struck.
+    private var ingotStamp: some View {
+        VStack(spacing: 6) {
+            Spacer()
+            Text("FINE \(model.baseMaterial(for: exhibit).name.uppercased())")
+                .font(.system(size: 11, weight: .semibold))
+                .tracking(4)
+                .foregroundStyle(.secondary)
+            Text("999.9")
+                .font(.system(size: 30, weight: .semibold))
+                .monospacedDigit()
+            Text("CAST Nº 0041")
+                .font(.system(size: 10, weight: .medium))
+                .tracking(2)
+                .foregroundStyle(.tertiary)
             Spacer()
         }
         .frame(maxWidth: .infinity)

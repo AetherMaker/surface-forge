@@ -218,19 +218,142 @@ struct SurfaceFinishTests {
         #expect(c.b.x.isFinite && c.b.y.isFinite)
     }
 
-    @Test("Only sandblasted scatters the highlight")
-    func onlySandblastedScatters() {
+    @Test("Only sandblasted and molten retune the highlight")
+    func onlyTheRetuningFinishesRetune() {
+        // Sandblasted scatters and molten focuses; every other finish must
+        // hand the tightness through untouched.
         for material in SurfaceMaterial.all {
             for finish in SurfaceFinish.all {
                 let effective = finish.effectiveTightness(of: material)
                 if finish.name == "Sandblasted" {
                     #expect(effective < material.highlightTightness)
+                } else if finish.name == "Molten" {
+                    #expect(effective > material.highlightTightness)
                 } else {
                     // Exact, not approximate: polished rides this value.
                     #expect(effective == material.highlightTightness)
                 }
             }
         }
+    }
+
+    @Test("Molten slopes hold their bars at any size")
+    func moltenSlopesHoldAtAnySize() {
+        // The solver divides each part's share by its peak and the
+        // frequency scale, so the flow keeps its size and steepness on any
+        // card.
+        for width in [200.0, 353.0, 800.0] {
+            let c = SurfaceFinish.molten
+                .moltenCoefficients(size: CGSize(width: width, height: 220))
+
+            let swell = c.a.y * SurfaceFinish.MoltenFlow.swellPeak * c.a.x
+            let ripple = c.a.z * SurfaceFinish.MoltenFlow.ripplePeak * c.a.x
+            let share = SurfaceFinish.moltenRippleShare
+
+            #expect(abs(swell - SurfaceFinish.moltenSlope * (1 - share)) < 0.001)
+            #expect(abs(ripple - SurfaceFinish.moltenSlope * share) < 0.001)
+        }
+    }
+
+    @Test("Molten crosses the ceiling, and on purpose")
+    func moltenCrossesTheCeilingDeliberately() {
+        // The 0.030 ceiling protects a flat card's gleam from texture. A
+        // melt is not a flat card, so the ceiling does not apply; it must
+        // still be a wave, not a wall.
+        #expect(SurfaceFinish.moltenSlope > 0.030)
+        #expect(SurfaceFinish.moltenSlope < 1.0)
+    }
+
+    @Test("The measured flow suprema match a fresh sampling")
+    func moltenPeaksAreTight() {
+        // The solver trusts the baked peaks. If a wave or the warp changes
+        // without re-measuring them, every slope silently rescales, so this
+        // re-measures by sampling the same padded card domain.
+        var swellPeak: Float = 0
+        var ripplePeak: Float = 0
+        let nu = 800, nv = 600
+        for i in 0..<nu {
+            for j in 0..<nv {
+                let p = SIMD2<Float>(
+                    -1.2 + 2.4 * Float(i) / Float(nu - 1),
+                    -0.9 + 1.8 * Float(j) / Float(nv - 1)
+                )
+                let parts = SurfaceFinish.MoltenFlow.parts(p)
+                swellPeak = max(swellPeak, simd_length(parts.swell))
+                ripplePeak = max(ripplePeak, simd_length(parts.ripple))
+            }
+        }
+
+        let flow = SurfaceFinish.MoltenFlow.self
+        // A coarser grid than the capture can undersample a peak, so the
+        // lower bound has slack. The upper bound does not.
+        #expect(swellPeak <= flow.swellPeak * 1.02 && swellPeak >= flow.swellPeak * 0.93)
+        #expect(ripplePeak <= flow.ripplePeak * 1.02 && ripplePeak >= flow.ripplePeak * 0.93)
+    }
+
+    @Test("The molten slope is finite and bounded everywhere")
+    func moltenSlopeIsBounded() {
+        // The shares sum to the total bar, so it bounds the whole field. A
+        // NaN or an overshoot would be a mistake in the warp's chain rule.
+        var generator = SystemRandomNumberGenerator()
+        let flow = SurfaceFinish.MoltenFlow.self
+        let share = SurfaceFinish.moltenRippleShare
+        let bound = SurfaceFinish.moltenSlope * 1.05
+
+        for _ in 0..<10_000 {
+            let p = SIMD2<Float>(
+                .random(in: -1.3...1.3, using: &generator),
+                .random(in: -1.0...1.0, using: &generator)
+            )
+            let parts = flow.parts(p)
+            let slope = parts.swell
+                * (SurfaceFinish.moltenSlope * (1 - share) / flow.swellPeak)
+                + parts.ripple * (SurfaceFinish.moltenSlope * share / flow.ripplePeak)
+
+            #expect(slope.x.isFinite && slope.y.isFinite, "not finite at \(p)")
+            #expect(simd_length(slope) <= bound, "slope \(simd_length(slope)) at \(p)")
+        }
+    }
+
+    @Test("The mirrored flow matches the shader's constants")
+    func moltenFlowMatchesTheShader() throws {
+        // The tests above check the mirror against itself, which passes
+        // however far the shader drifts. This one reads Surface.metal.
+        let shader = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .appendingPathComponent("../../Sources/SurfaceForge/Surface.metal")
+        let text = try String(contentsOf: shader, encoding: .utf8)
+
+        func numbers(named name: String) throws -> [Float] {
+            let pattern = #"constant float[23]?\s+k"# + name + #"(?:\[\d+\])?\s*=\s*\{?([^;]*)\}?;"#
+            let regex = try Regex(pattern).dotMatchesNewlines()
+            let match = try #require(text.firstMatch(of: regex), "\(name) not found")
+            return String(match.output[1].substring ?? "")
+                .replacing("float2", with: "").replacing("float3", with: "")
+                .split(whereSeparator: { "(),{} \n".contains($0) })
+                .compactMap { Float($0) }
+        }
+
+        let flow = SurfaceFinish.MoltenFlow.self
+        #expect(try numbers(named: "MoltenSwellWave")
+            == flow.swellWaves.flatMap { [$0.x, $0.y] })
+        #expect(try numbers(named: "MoltenSwellPhase")
+            == [flow.swellPhase.x, flow.swellPhase.y, flow.swellPhase.z])
+        #expect(try numbers(named: "MoltenSwellWeight")
+            == [flow.swellWeight.x, flow.swellWeight.y, flow.swellWeight.z])
+        #expect(try numbers(named: "MoltenRippleWave")
+            == flow.rippleWaves.flatMap { [$0.x, $0.y] })
+        #expect(try numbers(named: "MoltenRipplePhase")
+            == [flow.ripplePhase.x, flow.ripplePhase.y, flow.ripplePhase.z])
+        #expect(try numbers(named: "MoltenRippleWeight")
+            == [flow.rippleWeight.x, flow.rippleWeight.y, flow.rippleWeight.z])
+        #expect(try numbers(named: "MoltenWarpA")
+            == [flow.warpWaveA.x, flow.warpWaveA.y])
+        #expect(try numbers(named: "MoltenWarpB")
+            == [flow.warpWaveB.x, flow.warpWaveB.y])
+        #expect(try numbers(named: "MoltenWarpPhase")
+            == [flow.warpPhase.x, flow.warpPhase.y])
+        #expect(try numbers(named: "MoltenWarpAmount") == [flow.warpAmount])
     }
 
     @Test("A finish leaves the metal itself alone")

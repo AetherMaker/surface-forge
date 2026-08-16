@@ -119,6 +119,9 @@ extension View {
             case .sunburst:
                 arm = (library.surfaceSunburst,
                        [finish.sunburstCoefficients(size: proxy.size)])
+            case .molten:
+                arm = (library.surfaceMolten,
+                       [finish.moltenCoefficients(size: proxy.size)])
             }
 
             let shader = Shader(

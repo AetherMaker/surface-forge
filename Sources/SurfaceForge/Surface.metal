@@ -957,6 +957,78 @@ constant float3 kTopoWeight     = float3( 0.50,  0.30,  0.20);   // sums to 1
                             gleamAmount, metalTint, windowExponent, float3(0.0), slope, shade);
 }
 
+// The melt's flow: two scales of waves read through a domain warp, so the
+// bands of light curve instead of running straight. Continuous on purpose:
+// discrete features on a flat ground read as blemishes, not melt. Mirrored
+// in SurfaceFinish.MoltenFlow; the weld test keeps the copies equal.
+constant float2 kMoltenSwellWave[3] = {
+    float2( 4.1, 2.7), float2(-5.2, 3.4), float2( 1.9, -4.6),
+};
+constant float3 kMoltenSwellPhase  = float3(0.9, 2.3, 4.8);
+constant float3 kMoltenSwellWeight = float3(0.42, 0.33, 0.25);   // sums to 1
+constant float2 kMoltenRippleWave[3] = {
+    float2( 9.7, 6.3), float2(-11.4, 7.9), float2( 5.1, -10.8),
+};
+constant float3 kMoltenRipplePhase  = float3(2.2, 4.7, 0.6);
+constant float3 kMoltenRippleWeight = float3(0.4, 0.33, 0.27);   // sums to 1
+constant float2 kMoltenWarpA     = float2(2.9, -1.8);
+constant float2 kMoltenWarpB     = float2(2.2,  3.1);
+constant float2 kMoltenWarpPhase = float2(1.4,  4.2);
+constant float  kMoltenWarpAmount = 0.20;
+
+/// Molten: the surface itself is liquid.
+///
+/// Geometry only, no shade. Wave walls reach 27 degrees and the standard
+/// body renders them, so the output stays inside the model's range at
+/// every pose. Shade-painted liquid was tried and blew past black under
+/// tilt; the normal cannot.
+///
+/// `melt` is (frequency scale, swell amplitude, ripple amplitude, 0),
+/// solved in SurfaceFinish.moltenCoefficients. effectiveTightness narrows
+/// the window so the tongues keep a hard edge.
+[[stitchable]] half4 surfaceMolten(
+    float2 position,
+    half4  color,
+    float2 viewSize,
+    float2 eye,
+    float  halfHeight,
+    float3 keyDirection,
+    float3 diffuseAxis,
+    float  gleamAmount,
+    float3 metalTint,
+    float  windowExponent,
+    float4 melt
+) {
+    using namespace SurfaceForge;
+
+    float2 p  = surfaceCoordinates(position, viewSize, halfHeight);
+    float2 ps = p * melt.x;
+
+    // The warp, and the cosines its Jacobian needs below.
+    float argA = dot(kMoltenWarpA, ps) + kMoltenWarpPhase.x;
+    float argB = dot(kMoltenWarpB, ps) + kMoltenWarpPhase.y;
+    float2 warped = ps + kMoltenWarpAmount * float2(sin(argA), sin(argB));
+    float  cA = kMoltenWarpAmount * cos(argA);
+    float  cB = kMoltenWarpAmount * cos(argB);
+
+    float2 swell = float2(0.0);
+    float2 ripple = float2(0.0);
+    for (int i = 0; i < 3; ++i) {
+        swell += kMoltenSwellWave[i] * (kMoltenSwellWeight[i]
+            * cos(dot(kMoltenSwellWave[i], warped) + kMoltenSwellPhase[i]));
+        ripple += kMoltenRippleWave[i] * (kMoltenRippleWeight[i]
+            * cos(dot(kMoltenRippleWave[i], warped) + kMoltenRipplePhase[i]));
+    }
+    float2 raw = melt.y * swell + melt.z * ripple;
+    float2 slope = melt.x * float2(
+        raw.x * (1.0 + cA * kMoltenWarpA.x) + raw.y * (cB * kMoltenWarpB.x),
+        raw.x * (cA * kMoltenWarpA.y) + raw.y * (1.0 + cB * kMoltenWarpB.y)
+    );
+
+    return metalBody<false>(p, color, eye, keyDirection, diffuseAxis,
+                            gleamAmount, metalTint, windowExponent, float3(0.0), slope, 1.0);
+}
+
 // MARK: - Probes
 
 /// Paints magenta, reads nothing.
