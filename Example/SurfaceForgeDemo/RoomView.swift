@@ -26,6 +26,7 @@ struct RoomView: View {
         }
         // The room's own light, set once: every surface below shares it.
         .surfaceGleam(model.gleam)
+        .surfaceLean(model.lean)
     }
 
     /// Where the spotlight hangs on the room's wall.

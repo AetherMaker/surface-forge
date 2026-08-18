@@ -55,6 +55,7 @@ final class RoomModel {
     var focusedID: String?
 
     var gleam = 1.0
+    var lean = 1.0
 
     /// Where the spotlight hangs, -1 left wall to +1 right wall. The knob that
     /// replaced the old light-offset slider: it moves the room's light, and

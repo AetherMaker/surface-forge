@@ -655,6 +655,27 @@ struct SurfaceRenderTests {
         }
     }
 
+    @Test("Lean at zero leaves the lighting alone")
+    func leanDoesNotTouchTheLight() async {
+        // The card stops tipping; the metal must render what it rendered.
+        // Read at the rest pose, where the lean is zero anyway, so a
+        // difference here can only come from the lighting path.
+        let leaning = await wholePlate(
+            of: Surface(material: .gold) { Color.clear }
+                .frame(width: 353, height: 220)
+                .surfaceTiltSource(.fixed(pitch: 0, roll: 0))
+        )
+        let flat = await wholePlate(
+            of: Surface(material: .gold) { Color.clear }
+                .frame(width: 353, height: 220)
+                .surfaceLean(0)
+                .surfaceTiltSource(.fixed(pitch: 0, roll: 0))
+        )
+
+        let differing = zip(leaning, flat).filter { $0.0 != $0.1 }.count
+        #expect(differing == 0, "lean 0 moved \(differing) of \(leaning.count) pixels")
+    }
+
     @Test("Gleam at zero drops the surface to a flat matte")
     func gleamZeroFlattensTheSurface() async {
         // The claim `surfaceGleam` makes, and one nothing else can check: at 0
