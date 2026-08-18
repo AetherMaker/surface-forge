@@ -24,6 +24,7 @@ public struct SurfaceFinish: Sendable, Hashable {
         case sandblasted
         case sunburst
         case molten
+        case hammered
     }
 
     let kind: Kind
@@ -191,11 +192,20 @@ public struct SurfaceFinish: Sendable, Hashable {
         name: "Molten"
     )
 
+    /// Planished: a field of shallow round dents, each catching the light
+    /// on its own as the surface tilts.
+    public static let hammered = SurfaceFinish(
+        kind: .hammered,
+        stretch: 0,
+        grainAngle: 0,
+        name: "Hammered"
+    )
+
     /// Every built-in finish, for pickers and galleries.
     public static let all: [SurfaceFinish] = [
         .polished, .brushed, .pinstripe, .carbonTwill, .topographic,
         .basketweave, .clousDeParis, .knurling, .sandblasted, .sunburst,
-        .molten,
+        .molten, .hammered,
     ]
 
     // MARK: - Sanitizing
@@ -606,6 +616,87 @@ extension SurfaceFinish {
                 / (MoltenFlow.swellPeak * safeScale),
             Self.moltenSlope * Self.moltenRippleShare
                 / (MoltenFlow.ripplePeak * safeScale),
+            0
+        )
+        return coefficients
+    }
+
+    /// The hammer field, mirrored from the shader so the solver can hold the
+    /// dents' slope at its bar. The weld test keeps the copies equal.
+    ///
+    /// Round dents on a jittered hex lattice: each a bowl `-(1 - r²/R²)²`
+    /// inside its radius, so the slope is continuous and zero at the rim.
+    /// Radius and position jitter per cell, so no lattice shows.
+    enum HammerField {
+        /// Dent spacing on the reference card, surface units. 0.26 is 46pt.
+        static let pitch: Float = 0.26
+        /// Nominal dent radius, surface units. Neighbours overlap a little.
+        static let radius: Float = 0.165
+        /// Position jitter, as a fraction of pitch.
+        static let jitter: Float = 0.34
+        /// Radius jitter: 0.8 to 1.2 of nominal.
+        static let radiusSpread: Float = 0.40
+
+        /// Peak gradient at unit scale, measured over the padded card.
+        static let peak: Float = 11.664
+
+        static func hash(_ i: Float, _ j: Float, _ a: Float, _ b: Float) -> Float {
+            let x: Float = sin(i * a + j * b) * 43758.5453
+            return x - floor(x)
+        }
+
+        /// The dents' slope at one point, mirroring the shader's arm.
+        static func slope(_ p: SIMD2<Float>) -> SIMD2<Float> {
+            let a1 = SIMD2<Float>(pitch, 0)
+            let a2 = SIMD2<Float>(pitch * 0.5, pitch * 0.8660254)
+            // Inverse of the lattice basis, for the cell index.
+            let det: Float = a1.x * a2.y - a2.x * a1.y
+            let lu: Float = (a2.y * p.x - a2.x * p.y) / det
+            let lv: Float = (-a1.y * p.x + a1.x * p.y) / det
+            let i0: Float = floor(lu)
+            let j0: Float = floor(lv)
+
+            var g = SIMD2<Float>.zero
+            for di in -1...2 {
+                for dj in -1...2 {
+                    let i: Float = i0 + Float(di)
+                    let j: Float = j0 + Float(dj)
+                    let jx: Float = (hash(i, j, 127.1, 311.7) - 0.5) * jitter * pitch
+                    let jy: Float = (hash(i, j, 269.5, 183.3) - 0.5) * jitter * pitch
+                    let centre = a1 * i + a2 * j + SIMD2<Float>(jx, jy)
+                    let spread: Float = 1 - radiusSpread / 2 + radiusSpread * hash(i, j, 419.2, 371.9)
+                    let r: Float = radius * spread
+                    let d = p - centre
+                    let q: Float = simd_dot(d, d) / (r * r)
+                    if q < 1 {
+                        g += d * (4 * (1 - q) / (r * r))
+                    }
+                }
+            }
+            return g
+        }
+    }
+
+    /// The dents' peak slope, past the 0.030 ceiling on purpose. A dent is
+    /// coarse enough to shade itself: the wall away from the light darkens
+    /// through the diffuse term, and each dent flashes on its own. 0.18 is a
+    /// 10-degree bowl wall.
+    static let hammerSlope: Float = 0.18
+
+    /// Coefficients for the hammered arm at one drawn size.
+    ///
+    /// Slots: `a` = (frequency scale, slope amplitude, 0, 0). The amplitude
+    /// is divided by the field's peak and the scale, so the dents keep their
+    /// size and depth on any card.
+    func hammerCoefficients(size: CGSize) -> SurfaceFinishCoefficients {
+        let pointsPerUnit = Self.pointsPerUnit(for: size)
+        let scale = pointsPerUnit / Self.referencePointsPerUnit
+
+        var coefficients = SurfaceFinishCoefficients()
+        coefficients.a = SIMD4(
+            scale,
+            Self.hammerSlope / (HammerField.peak * max(scale, 1.0e-3)),
+            0,
             0
         )
         return coefficients

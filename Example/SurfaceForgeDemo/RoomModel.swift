@@ -13,7 +13,7 @@ struct Exhibit: Identifiable, Hashable {
 
     enum Design: Hashable {
         case membershipCard, platinumCard, bankCard, keyCard, expeditionPass
-        case giftCard, plaque, shopTag, boardingPass, recordClub, ingotStamp
+        case giftCard, plaque, shopTag, boardingPass, recordClub, ingotStamp, artisanTag
     }
 
     /// Every ratio stays near the card's calibrated 353:220; squares let the
@@ -41,6 +41,8 @@ struct Exhibit: Identifiable, Hashable {
                 ratio: 353 / 220, cornerRadius: 22),
         Exhibit(finish: .molten, design: .ingotStamp, material: .gold,
                 ratio: 353 / 220, cornerRadius: 26),
+        Exhibit(finish: .hammered, design: .artisanTag, material: .copper,
+                ratio: 353 / 220, cornerRadius: 18),
     ]
 }
 

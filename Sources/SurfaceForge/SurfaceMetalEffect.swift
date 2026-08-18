@@ -122,6 +122,9 @@ extension View {
             case .molten:
                 arm = (library.surfaceMolten,
                        [finish.moltenCoefficients(size: proxy.size)])
+            case .hammered:
+                arm = (library.surfaceHammered,
+                       [finish.hammerCoefficients(size: proxy.size)])
             }
 
             let shader = Shader(

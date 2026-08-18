@@ -1029,6 +1029,76 @@ constant float  kMoltenWarpAmount = 0.20;
                             gleamAmount, metalTint, windowExponent, float3(0.0), slope, 1.0);
 }
 
+// The hammer field: round dents on a jittered hex lattice, each a bowl
+// -(1 - r^2/R^2)^2 with a continuous slope that is zero at the rim. Radius
+// and position jitter per cell. Mirrored in SurfaceFinish.HammerField; the
+// weld test keeps the copies equal.
+constant float kHammerPitch        = 0.26;
+constant float kHammerRadius       = 0.165;
+constant float kHammerJitter       = 0.34;
+constant float kHammerRadiusSpread = 0.40;
+
+inline float hammerHash(float i, float j, float a, float b) {
+    return fract(sin(i * a + j * b) * 43758.5453);
+}
+
+/// Hammered: planished metal, a field of shallow round dents.
+///
+/// Geometry only. Each dent's wall is steep enough for the diffuse term to
+/// shade it and for the window to flash it on its own, so the finish reads
+/// as struck metal from the standard body with no shade term at all.
+///
+/// `hammer` is (frequency scale, slope amplitude, 0, 0), solved in
+/// SurfaceFinish.hammerCoefficients.
+[[stitchable]] half4 surfaceHammered(
+    float2 position,
+    half4  color,
+    float2 viewSize,
+    float2 eye,
+    float  halfHeight,
+    float3 keyDirection,
+    float3 diffuseAxis,
+    float  gleamAmount,
+    float3 metalTint,
+    float  windowExponent,
+    float4 hammer
+) {
+    using namespace SurfaceForge;
+
+    float2 p  = surfaceCoordinates(position, viewSize, halfHeight);
+    float2 ps = p * hammer.x;
+
+    const float2 a1 = float2(kHammerPitch, 0.0);
+    const float2 a2 = float2(kHammerPitch * 0.5, kHammerPitch * 0.8660254);
+    const float  det = a1.x * a2.y - a2.x * a1.y;
+    float lu = (a2.y * ps.x - a2.x * ps.y) / det;
+    float lv = (-a1.y * ps.x + a1.x * ps.y) / det;
+    float i0 = floor(lu);
+    float j0 = floor(lv);
+
+    float2 g = float2(0.0);
+    for (int di = -1; di <= 2; ++di) {
+        for (int dj = -1; dj <= 2; ++dj) {
+            float i = i0 + float(di);
+            float j = j0 + float(dj);
+            float2 c = a1 * i + a2 * j
+                     + (float2(hammerHash(i, j, 127.1, 311.7),
+                               hammerHash(i, j, 269.5, 183.3)) - 0.5)
+                       * (kHammerJitter * kHammerPitch);
+            float r = kHammerRadius
+                    * (1.0 - kHammerRadiusSpread * 0.5
+                       + kHammerRadiusSpread * hammerHash(i, j, 419.2, 371.9));
+            float2 d = ps - c;
+            float  q = dot(d, d) / (r * r);
+            g += (q < 1.0) ? d * (4.0 * (1.0 - q) / (r * r)) : float2(0.0);
+        }
+    }
+    float2 slope = g * (hammer.x * hammer.y);
+
+    return metalBody<false>(p, color, eye, keyDirection, diffuseAxis,
+                            gleamAmount, metalTint, windowExponent, float3(0.0), slope, 1.0);
+}
+
 // MARK: - Probes
 
 /// Paints magenta, reads nothing.
