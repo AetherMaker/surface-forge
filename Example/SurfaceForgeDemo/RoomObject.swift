@@ -41,7 +41,7 @@ struct Placard: View {
     }
 }
 
-/// Eleven designs, so the eleven finishes each dress something worth engraving.
+/// Twelve designs, so the twelve finishes each dress something worth engraving.
 struct ExhibitContent: View {
     let design: Exhibit.Design
     let model: RoomModel
@@ -60,6 +60,7 @@ struct ExhibitContent: View {
         case .boardingPass: boardingPass
         case .recordClub: recordClub
         case .ingotStamp: ingotStamp
+        case .artisanTag: artisanTag
         }
     }
 
@@ -270,6 +271,22 @@ struct ExhibitContent: View {
             Spacer()
         }
         .frame(maxWidth: .infinity)
+    }
+
+    private var artisanTag: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("HAND STRUCK")
+                .font(.system(size: 11, weight: .semibold))
+                .tracking(3)
+            Spacer()
+            Text("Atelier Ferro")
+                .font(.system(size: 18, weight: .medium, design: .serif))
+                .foregroundStyle(.secondary)
+            Text("Nº 27 OF 50")
+                .font(.system(size: 10, weight: .medium))
+                .tracking(2)
+                .foregroundStyle(.tertiary)
+        }
     }
 
     private func passColumn(_ label: String, _ value: String) -> some View {

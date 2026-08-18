@@ -682,7 +682,7 @@ struct FinishArmTests {
         .brushed, .brushed(angle: .degrees(90)),
         .pinstripe, .pinstripe(angle: .degrees(90)),
         .carbonTwill, .topographic, .basketweave, .clousDeParis,
-        .knurling, .sandblasted, .sunburst, .molten,
+        .knurling, .sandblasted, .sunburst, .molten, .hammered,
     ]
 
     @Test("Every worked finish is on the test roster")
@@ -876,6 +876,7 @@ struct FinishAppearanceTests {
         ("Sandblasted", 241, 227, 164, 0.17),
         ("Sunburst", 241, 228, 166, 1.65),
         ("Molten", 224, 200, 129, 0.22),
+        ("Hammered", 232, 211, 142, 0.94),
     ]
 
     @Test("Every finish renders the appearance it is meant to")

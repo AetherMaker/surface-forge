@@ -315,6 +315,61 @@ struct SurfaceFinishTests {
         }
     }
 
+    @Test("Hammer slope holds its bar at any size")
+    func hammerSlopeHoldsAtAnySize() {
+        for width in [200.0, 353.0, 800.0] {
+            let c = SurfaceFinish.hammered
+                .hammerCoefficients(size: CGSize(width: width, height: 220))
+            let peak = c.a.y * SurfaceFinish.HammerField.peak * c.a.x
+            #expect(abs(peak - SurfaceFinish.hammerSlope) < 0.001)
+        }
+    }
+
+    @Test("The measured hammer peak matches a fresh sampling")
+    func hammerPeakIsTight() {
+        var peak: Float = 0
+        let nu = 800, nv = 600
+        for i in 0..<nu {
+            for j in 0..<nv {
+                let p = SIMD2<Float>(
+                    -1.2 + 2.4 * Float(i) / Float(nu - 1),
+                    -0.9 + 1.8 * Float(j) / Float(nv - 1)
+                )
+                peak = max(peak, simd_length(SurfaceFinish.HammerField.slope(p)))
+            }
+        }
+        let baked = SurfaceFinish.HammerField.peak
+        #expect(peak <= baked * 1.02 && peak >= baked * 0.93, "sampled \(peak) vs baked \(baked)")
+    }
+
+    @Test("Hammer crosses the ceiling, and on purpose")
+    func hammerCrossesTheCeilingDeliberately() {
+        // A dent is coarse enough to shade itself; the ceiling is for fine
+        // texture. Still a bowl, not a wall.
+        #expect(SurfaceFinish.hammerSlope > 0.030)
+        #expect(SurfaceFinish.hammerSlope < 0.5)
+    }
+
+    @Test("The mirrored hammer field matches the shader's constants")
+    func hammerFieldMatchesTheShader() throws {
+        let shader = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .appendingPathComponent("../../Sources/SurfaceForge/Surface.metal")
+        let text = try String(contentsOf: shader, encoding: .utf8)
+
+        func scalar(named name: String) throws -> Float {
+            let regex = try Regex(#"constant float\s+k"# + name + #"\s*=\s*([0-9.]+);"#)
+            let match = try #require(text.firstMatch(of: regex), "\(name) not found")
+            return try #require(Float(match.output[1].substring ?? ""))
+        }
+
+        let field = SurfaceFinish.HammerField.self
+        #expect(try scalar(named: "HammerPitch") == field.pitch)
+        #expect(try scalar(named: "HammerRadius") == field.radius)
+        #expect(try scalar(named: "HammerJitter") == field.jitter)
+        #expect(try scalar(named: "HammerRadiusSpread") == field.radiusSpread)
+    }
+
     @Test("The mirrored flow matches the shader's constants")
     func moltenFlowMatchesTheShader() throws {
         // The tests above check the mirror against itself, which passes
