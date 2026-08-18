@@ -65,7 +65,7 @@ https://github.com/AetherMaker/surface-forge
 **Package.swift.**
 
 ```swift
-.package(url: "https://github.com/AetherMaker/surface-forge", from: "0.3.2")
+.package(url: "https://github.com/AetherMaker/surface-forge", from: "0.3.3")
 ```
 
 ## Materials
@@ -169,9 +169,9 @@ The same metal, worked differently:
 Surface(material: .gold.finish(.brushed)) { … }
 ```
 
-Eleven finishes ship: polished (the default), brushed, pinstripe, carbon
+Twelve finishes ship: polished (the default), brushed, pinstripe, carbon
 twill, topographic, basketweave, clous de Paris, knurling, sandblasted,
-sunburst and molten. Brushed and pinstripe take a direction:
+sunburst, molten and hammered. Brushed and pinstripe take a direction:
 
 ```swift
 .gold.finish(.brushed(angle: .degrees(90)))
