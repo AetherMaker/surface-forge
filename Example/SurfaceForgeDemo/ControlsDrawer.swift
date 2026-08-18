@@ -7,6 +7,7 @@ struct ControlsDrawer: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             slider("Gleam", value: $model.gleam, in: 0...1)
+            slider("Lean", value: $model.lean, in: 0...1)
             // Moves the spotlight itself; each piece's own offset follows
             // from standing where it stands.
             slider("Light position", value: $model.spotlightBias, in: -1...1)

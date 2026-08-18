@@ -32,6 +32,7 @@ public struct Surface<Content: View>: View {
 
     @Environment(\.surfaceTiltSource) private var tiltSource
     @Environment(\.surfaceGleam) private var gleam
+    @Environment(\.surfaceLean) private var lean
     @Environment(\.surfaceLightOffset) private var lightOffset
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
@@ -101,7 +102,7 @@ public struct Surface<Content: View>: View {
                     .blur(radius: SurfaceStyle.silhouetteFeather)
             }
             .rotation3DEffect(
-                .radians(reflection.tiltAngle),
+                .radians(reflection.tiltAngle * min(max(lean, 0), 1)),
                 axis: (x: reflection.tiltAxis.x, y: reflection.tiltAxis.y, z: 0),
                 perspective: SurfaceStyle.tiltPerspective
             )
@@ -155,6 +156,7 @@ public struct Surface<Content: View>: View {
 extension EnvironmentValues {
     @Entry var surfaceGleam: Double = 1
     @Entry var surfaceLightOffset: Double = 0
+    @Entry var surfaceLean: Double = 1
 }
 
 extension View {
@@ -183,6 +185,16 @@ extension View {
     /// tree and every surface below agrees.
     public func surfaceLightOffset(_ offset: Double) -> some View {
         environment(\.surfaceLightOffset, offset)
+    }
+
+    /// How far the surface tips as the device turns, from `0` to `1`.
+    ///
+    /// At `0` it stays flat on the screen and only its lighting responds.
+    /// At `1` it tips up to 9 degrees. The light is unaffected either way.
+    ///
+    /// Propagates through the environment, so it can be set once high in a tree.
+    public func surfaceLean(_ amount: Double) -> some View {
+        environment(\.surfaceLean, amount)
     }
 }
 
