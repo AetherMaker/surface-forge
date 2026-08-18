@@ -65,7 +65,7 @@ https://github.com/AetherMaker/surface-forge
 **Package.swift.**
 
 ```swift
-.package(url: "https://github.com/AetherMaker/surface-forge", from: "0.3.3")
+.package(url: "https://github.com/AetherMaker/surface-forge", from: "0.3.4")
 ```
 
 ## Materials
